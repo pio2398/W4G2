@@ -15,3 +15,8 @@ Contributions and Improvements:
 
 [Usage](./docs/usage.md)
 [Flashing AEH-W4G2](./docs/install_on_w4g2/instalation.md)
+
+# Thanks
+Project base on some work from:
+https://github.com/straga/scrivo_project by @straga
+Work of @polsup2 from https://github.com/straga/scrivo_project/issues/1. 
