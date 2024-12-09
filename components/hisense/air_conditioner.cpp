@@ -381,7 +381,7 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
 
   // Is ON
   {
-    byte mask = 0b00001000;
+    uint8_t mask = 0b00001000;
     bool is_on = ((payload[16] & mask) != 0);
     if (is_on) {
       auto z = decode_climateMode((payload[16] >> 4));
@@ -408,10 +408,10 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
 
   // Swig detect
   {
-    byte updown_mask = 0b01000000;
+    uint8_t updown_mask = 0b01000000;
     bool up_down = (payload[33] & updown_mask) != 0;
 
-    byte lr_mask = 0b10000000;
+    uint8_t lr_mask = 0b10000000;
     bool left_right = (payload[33] & lr_mask) != 0;
 
     if (left_right && up_down) {
