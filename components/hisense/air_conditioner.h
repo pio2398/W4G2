@@ -165,7 +165,18 @@ int encode_climateMode(const climate::ClimateMode mode) {
   }
 }
 
-
+int encode_fan_mode(const climate::ClimateFanMode mode) {
+  switch (mode) {
+    case climate::CLIMATE_FAN_OFF:    return 0;
+    case climate::CLIMATE_FAN_AUTO:   return 1;
+    case climate::CLIMATE_FAN_LOW:    return 10;
+    case climate::CLIMATE_FAN_FOCUS:  return 12; // matches your traits() list
+    case climate::CLIMATE_FAN_MEDIUM: return 14;
+    case climate::CLIMATE_FAN_MIDDLE: return 16;
+    case climate::CLIMATE_FAN_HIGH:   return 18;
+    default: return 1; // fall back to auto
+  }
+}
 };
 
 

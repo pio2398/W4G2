@@ -120,7 +120,7 @@ climate::ClimateTraits AirConditioner::traits() {
       {climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
        climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
 
-  traits.set_supports_current_temperature(true);
+  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
   traits.set_visual_target_temperature_step(1.0f);
 
   return traits;
@@ -199,9 +199,7 @@ void AirConditioner::send_status() {
   }
 
   if (next_hvac_settings.target_temperature != nullopt) {
-    auto my_tmp =
-        static_cast<uint8_t>(next_hvac_settings.target_temperature.value());
-
+    auto my_tmp = static_cast<uint8_t>(next_hvac_settings.target_temperature.value());
     if (!(my_tmp > 16ul || my_tmp < 30ul)) {
       ESP_LOGD(TAG, "Not valid tmp!");
       return;
@@ -213,9 +211,9 @@ void AirConditioner::send_status() {
     tempX |= (1ul << 0);
     status[19] = tempX;
   }
+  
   status[36] = 0b01000000;
-
-
+  
   if (display_enable) {
     status[36] = 0b11000000;
   } else {
@@ -226,19 +224,24 @@ void AirConditioner::send_status() {
     // TODO: Combine with decoding
     auto next_swing_setting = next_hvac_settings.swing_mode;
     if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_BOTH) {
-      status[32] = 0b11110000;
-    } else if (next_swing_setting ==
-               climate::ClimateSwingMode::CLIMATE_SWING_OFF) {
-      status[32] = 0b01010000;
-    } else if (next_swing_setting ==
-               climate::ClimateSwingMode::CLIMATE_SWING_VERTICAL) {
-      status[32] = 0b00110000;
-    } else if (next_swing_setting ==
-               climate::ClimateSwingMode::CLIMATE_SWING_HORIZONTAL) {
-      status[32] = 0b01110000;
+      status[35] = 0b11000000;
+    } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_OFF) {
+      status[35] = 0b00000000;
+    } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_VERTICAL) {
+      status[35] = 0b10000000;
+    } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_HORIZONTAL) {
+      status[35] = 0b01000000;
     }
   }
 
+  if (next_hvac_settings.fan_mode != nullopt) {
+    uint8_t fan_raw = static_cast<uint8_t>(encode_fan_mode(next_hvac_settings.fan_mode.value()));
+    uint8_t fanX = (fan_raw << 1);
+    fanX |= (1ul << 0);
+    status[16] = fanX;
+  }
+
+  
   send_raw(status);
   this->next_hvac_settings_ = nullopt;
   ESP_LOGD(TAG, "send_status");
