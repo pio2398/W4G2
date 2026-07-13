@@ -224,13 +224,13 @@ void AirConditioner::send_status() {
     // TODO: Combine with decoding
     auto next_swing_setting = next_hvac_settings.swing_mode;
     if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_BOTH) {
-      status[35] = 0b11000000;
+      status[32] = 0b11110000;
     } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_OFF) {
-      status[35] = 0b00000000;
+      status[32] = 0b01010000;
     } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_VERTICAL) {
-      status[35] = 0b10000000;
+      status[32] = 0b11010000;
     } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_HORIZONTAL) {
-      status[35] = 0b01000000;
+      status[32] = 0b01110000;
     }
   }
 

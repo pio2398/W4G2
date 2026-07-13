@@ -14,6 +14,11 @@ static const char *const TAG = "climate.air_conditioner";
 class AirConditionSwitch : public Component, public switch_::Switch {
 public:
   AirConditionSwitch(){};
+  void setup() override {
+    // Force the display on by default at every boot. remove this function if you dont want the display to be ON by default
+    this->write_state(true);
+  }
+
   void write_state(bool state) {
     parent_->set_display_switch(state);
     ESP_LOGD(TAG, "Change state: %d", state);
