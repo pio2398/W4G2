@@ -137,7 +137,19 @@ switch:
       name: Sleep
     beep:                 # optional; default on, restored across reboots
       name: Beep
+
+select:
+  - platform: hisense
+    hisense_id: hisense_ac
+    sleep_profile:        # General, Elderly, Young or Child; used by the sleep switch
+      name: Sleep Profile
 ```
+
+`sleep_profile` picks which of the unit's four sleep curves the `sleep` switch turns on
+(control byte 17 = `(profile << 1) | 1`, status byte 15 = `profile << 1`). Changing it while
+sleep is on switches the unit to the new profile. While sleep is on, the select shows the
+profile the unit reports, so a profile chosen with the remote shows up too. The last choice is
+restored at boot.
 
 `beep` is a local setting, not a unit state: it sets byte 23 bit 2 of the commands sent from
 ESPHome, which asks the unit to beep when it accepts the command (the stock module always sets

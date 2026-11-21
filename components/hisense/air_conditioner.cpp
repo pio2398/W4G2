@@ -391,7 +391,7 @@ void AirConditioner::send_status() {
     settling(Feature::FEATURE_QUIET);
 
   if (next_hvac_settings.sleep.has_value())
-    status[17] = (uint8_t) (((*next_hvac_settings.sleep ? 1 : 0) << 1) | 1);
+    status[17] = (uint8_t) ((*next_hvac_settings.sleep << 1) | 1);
   if (next_hvac_settings.turbo.has_value())
     status[33] |= (uint8_t) (((*next_hvac_settings.turbo ? 1 : 0) << 3) | 0x04);
   if (next_hvac_settings.eco.has_value())
@@ -439,11 +439,26 @@ void AirConditioner::set_feature(Feature feature, bool state) {
       next.quiet = state;
       break;
     case Feature::FEATURE_SLEEP:
-      next.sleep = state;
+      next.sleep = state ? this->sleep_profile_ : 0;
       break;
     default:
       break;
   }
+}
+
+void AirConditioner::set_sleep_profile(uint8_t profile, bool send) {
+  if (profile < 1 || profile > SLEEP_PROFILE_COUNT)
+    return;
+  this->sleep_profile_ = profile;
+  if (!send)
+    return;
+  // Apply at once if sleep is on, or about to be switched on by a queued command.
+  bool queued_on = this->next_hvac_settings_.has_value() && this->next_hvac_settings_->sleep.has_value() &&
+                   *this->next_hvac_settings_->sleep != 0;
+  bool queued_off = this->next_hvac_settings_.has_value() && this->next_hvac_settings_->sleep.has_value() &&
+                    *this->next_hvac_settings_->sleep == 0;
+  if (queued_on || (this->sleep_reported_ != 0 && !queued_off))
+    this->pending_settings_().sleep = profile;
 }
 
 void AirConditioner::dump_config() {
@@ -575,6 +590,23 @@ void AirConditioner::decode_features_(const std::vector<uint8_t> &payload) {
   auto settled = [this, command_reply](Feature f) {
     return !command_reply || !(this->settling_features_ & (1u << static_cast<uint8_t>(f)));
   };
+  if (settled(Feature::FEATURE_SLEEP)) {
+    this->sleep_reported_ = payload[15] >> 1;
+    // While sleep is on, the unit's profile is the one to show (and to reuse).
+    if (this->sleep_reported_ >= 1 && this->sleep_reported_ <= SLEEP_PROFILE_COUNT &&
+        !this->next_hvac_settings_.has_value()) {
+      this->sleep_profile_ = this->sleep_reported_;
+#ifdef USE_SELECT
+      auto *sel = this->sleep_profile_select_;
+      if (sel != nullptr) {
+        auto index = sel->active_index();
+        auto option = sel->at(this->sleep_profile_ - 1);
+        if (option.has_value() && (!sel->has_state() || !index.has_value() || *index != this->sleep_profile_ - 1u))
+          sel->publish_state(*option);
+      }
+#endif
+    }
+  }
 #ifdef USE_SWITCH
   if (settled(Feature::FEATURE_SLEEP))
     this->publish_feature_(Feature::FEATURE_SLEEP, (payload[15] >> 1) != 0);

@@ -16,6 +16,9 @@
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
+#ifdef USE_SELECT
+#include "esphome/components/select/select.h"
+#endif
 
 namespace esphome {
 namespace hisense {
@@ -62,6 +65,17 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 
 #ifdef USE_TEXT_SENSOR
   void set_faults_text_sensor(text_sensor::TextSensor *s) { this->faults_text_sensor_ = s; }
+#endif
+
+  // Sleep profiles reported in status byte 15 (value >> 1) and sent in control
+  // byte 17 ((profile << 1) | 1). 0 = sleep off.
+  // Profiles 1..4 are General, Elderly, Young, Child (stock firmware names); the
+  // select platform lists them in that order.
+  static const uint8_t SLEEP_PROFILE_COUNT = 4;
+  /// Profile (1..4) used when sleep is switched on. Sent at once if sleep is on and send is true.
+  void set_sleep_profile(uint8_t profile, bool send);
+#ifdef USE_SELECT
+  void set_sleep_profile_select(select::Select *s) { this->sleep_profile_select_ = s; }
 #endif
 
 #ifdef USE_SENSOR
@@ -120,6 +134,8 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   bool display_enable{true};  // Status of display screen of AC unit.
   bool beep_enable_{true};    // Ask the unit to beep when it accepts a command (T23 bit 2)
   uint8_t settling_features_{0};  // Feature bits changed by the last command, not yet confirmed by a poll
+  uint8_t sleep_profile_{1};      // profile used when sleep is switched on
+  uint8_t sleep_reported_{0};     // profile last reported by the unit, 0 = off
 
   uint16_t checksum(const std::vector<uint8_t> &payload);
   void change_status(Status status);
@@ -131,6 +147,9 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *faults_text_sensor_{nullptr};
+#endif
+#ifdef USE_SELECT
+  select::Select *sleep_profile_select_{nullptr};
 #endif
 
 #ifdef USE_SENSOR
@@ -149,7 +168,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
     esphome::optional<bool> eco;
     esphome::optional<bool> turbo;
     esphome::optional<bool> quiet;
-    esphome::optional<bool> sleep;
+    esphome::optional<uint8_t> sleep;  // sleep profile, 0 = off
 
     HvacSettings(){};
     HvacSettings(const HvacSettings &) = default;
