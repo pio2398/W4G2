@@ -342,6 +342,18 @@ void AirConditioner::control(const climate::ClimateCall &call) {
     next.preset = call.get_preset();
 }
 
+void AirConditioner::set_feature(Feature feature, bool state) {
+  auto &next = this->pending_settings_();
+  switch (feature) {
+    case Feature::FEATURE_DISPLAY:
+      next.display = state;
+      this->display_enable = state;
+      break;
+    default:
+      break;
+  }
+}
+
 void AirConditioner::dump_config() {
   ESP_LOGCONFIG(TAG, "Hisense:");
   LOG_PIN("  Flow Control Pin: ", this->flow_control_pin_);
@@ -484,11 +496,6 @@ void AirConditioner::update_sub_sensor_(SubSensorType type, float value) {
   }
 };
 #endif
-
-void AirConditioner::set_display_switch(bool state) {
-  this->pending_settings_().display = state;
-  display_enable = state;
-}
 
 void AirConditioner::change_status(Status new_status) {
   if (new_status != this->status)

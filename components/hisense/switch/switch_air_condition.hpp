@@ -3,33 +3,37 @@
 #include "../air_conditioner.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/core/component.h"
-
-#include <vector>
+#include "esphome/core/log.h"
 
 namespace esphome {
 namespace hisense {
 namespace ac {
-static const char *const TAG = "climate.air_conditioner";
 
 class AirConditionSwitch : public Component, public switch_::Switch {
  public:
-  AirConditionSwitch() {};
+  AirConditionSwitch(){};
+
   void setup() override {
-    // Force the display on by default at every boot. remove this function if you dont want the display to be ON by
-    // default
-    this->write_state(true);
+    // Force the display on at every boot (upstream behaviour). Other features
+    // take their state from the unit's status replies.
+    if (this->feature_ == AirConditioner::Feature::FEATURE_DISPLAY)
+      this->write_state(true);
   }
 
-  void write_state(bool state) {
-    parent_->set_display_switch(state);
-    ESP_LOGD(TAG, "Change state: %d", state);
+  void write_state(bool state) override {
+    parent_->set_feature(this->feature_, state);
+    ESP_LOGD("climate.air_conditioner", "Feature %u -> %d", (unsigned) this->feature_, state);
     this->publish_state(state);
   };
+
   void set_parent(AirConditioner *parent) { this->parent_ = parent; }
+  void set_feature(AirConditioner::Feature feature) { this->feature_ = feature; }
 
  protected:
   AirConditioner *parent_;
+  AirConditioner::Feature feature_{AirConditioner::Feature::FEATURE_DISPLAY};
 };
+
 }  // namespace ac
 }  // namespace hisense
 }  // namespace esphome

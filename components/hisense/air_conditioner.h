@@ -42,7 +42,17 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   void send_raw(const std::vector<uint8_t> &payload);
   void set_flow_control_pin(GPIOPin *flow_control_pin) { this->flow_control_pin_ = flow_control_pin; }
   uint8_t waiting_for_response{0};
-  void set_display_switch(bool state);
+
+  // Toggleable features exposed as switches.
+  enum class Feature : uint8_t { FEATURE_DISPLAY = 0, FEATURE_COUNT };
+  void set_feature(Feature feature, bool state);
+  void set_display_switch(bool state) { this->set_feature(Feature::FEATURE_DISPLAY, state); }
+
+#ifdef USE_SWITCH
+  void set_feature_switch(Feature feature, switch_::Switch *sw) {
+    this->feature_switches_[static_cast<size_t>(feature)] = sw;
+  }
+#endif
 
 #ifdef USE_SENSOR
   enum class SubSensorType {
@@ -97,6 +107,10 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 
   uint16_t checksum(const std::vector<uint8_t> &payload);
   void change_status(Status status);
+
+#ifdef USE_SWITCH
+  switch_::Switch *feature_switches_[static_cast<size_t>(Feature::FEATURE_COUNT)]{};
+#endif
 
 #ifdef USE_SENSOR
   static constexpr std::size_t SubSensorTypeCount = static_cast<std::size_t>(SubSensorType::SUB_SENSOR_TYPE_COUNT);
