@@ -105,3 +105,7 @@ switch:
       name: Hisens Display Enable
 
 ```
+## Notes from live testing (AEH-W4G2, product type 104)
+
+* The unit answers every control command (0x65) with a full status frame in the same layout
+  as the 0x66 reply. The component uses it to confirm changes within about 0.5 s.

@@ -159,7 +159,14 @@ ParseStatus AirConditioner::check_frame_() {
   std::vector<uint8_t> payload(buf.begin() + 2, buf.end() - 4);
   ESP_LOGV(TAG, "Frame OK (%u bytes): %s", (unsigned) payload.size(), format_hex_pretty(payload).c_str());
 
-  this->decode_message(payload);
+  if (payload.size() > 12 && (payload[11] == 0x66 || payload[11] == 0x65) && payload[12] == 0x00) {
+    // 0x66 = status reply; 0x65 = reply to a control command, which carries the
+    // full status in the same layout (verified live).
+    this->decode_message(payload);
+  } else {
+    ESP_LOGD(TAG, "Non-status frame (cmd 0x%02X, %u bytes)", payload.size() > 11 ? payload[11] : 0,
+             (unsigned) payload.size());
+  }
 
   if (waiting_for_response) {
     waiting_for_response = 0;
