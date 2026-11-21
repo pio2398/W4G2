@@ -21,8 +21,7 @@ void AirConditioner::loop() {
     print_extra_log_in_this_loop = true;
   }
 
-  if (millis() - this->last_recived_ > 10000 &&
-      millis() - this->last_status_change > 10000) {
+  if (millis() - this->last_recived_ > 10000 && millis() - this->last_status_change > 10000) {
     ESP_LOGD(TAG, "Stuck reset error");
     this->rx_buffer_.clear();
     change_status(Status::after_fail);
@@ -39,9 +38,7 @@ void AirConditioner::loop() {
     auto before_next_try = millis() - last_status_change > 8000;
 
     if (print_extra_log_in_this_loop)
-      ESP_LOGD(TAG,
-               "Waiting %d before asking for status after communitation fail.",
-               before_next_try);
+      ESP_LOGD(TAG, "Waiting %d before asking for status after communitation fail.", before_next_try);
 
     if (before_next_try <= 0) {
       ESP_LOGD(TAG, "Reset status.");
@@ -59,9 +56,8 @@ void AirConditioner::loop() {
 
   if (millis() - this->last_recived_ > 2000 && status == Status::standby) {
     ESP_LOGD(TAG, "Requsting status.");
-    std::vector<uint8_t> requst_status{0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00,
-                                       0x00, 0x01, 0x01, 0xFE, 0x01, 0x00,
-                                       0x00, 0x66, 0x00, 0x00, 0x00};
+    std::vector<uint8_t> requst_status{0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00, 0x01, 0x01,
+                                       0xFE, 0x01, 0x00, 0x00, 0x66, 0x00, 0x00, 0x00};
     this->send_raw(requst_status);
     // F4 F5 00 40 0C 00 00 01 01 FE 01 00 00 66 00 00 00 01 B3 F4 FB
     change_status(Status::waiting_for_status_response);
@@ -75,24 +71,23 @@ void AirConditioner::loop() {
     rec_buffor.resize(available_to_read, 0);
 
     this->read_array(&rec_buffor[0], available_to_read);
-    this->rx_buffer_.insert(this->rx_buffer_.end(), rec_buffor.begin(),
-                            rec_buffor.end());
+    this->rx_buffer_.insert(this->rx_buffer_.end(), rec_buffor.begin(), rec_buffor.end());
 
     const auto parse_status = this->parse_ac_message_byte_();
     this->last_recived_ = millis();
     switch (parse_status) {
-    case ParseStatus::PARSE_ERROR:
-      ESP_LOGD(TAG, "Parse error");
-      this->rx_buffer_.clear();
-      change_status(Status::after_fail);
-      return;
-    case ParseStatus::PARSE_OK:
-      this->rx_buffer_.clear();
-      change_status(Status::standby);
-      return;
-    case ParseStatus::NOT_FULL:
-      change_status(Status::waiting_for_more);
-      break;
+      case ParseStatus::PARSE_ERROR:
+        ESP_LOGD(TAG, "Parse error");
+        this->rx_buffer_.clear();
+        change_status(Status::after_fail);
+        return;
+      case ParseStatus::PARSE_OK:
+        this->rx_buffer_.clear();
+        change_status(Status::standby);
+        return;
+      case ParseStatus::NOT_FULL:
+        change_status(Status::waiting_for_more);
+        break;
     }
   }
 }
@@ -105,20 +100,16 @@ float AirConditioner::get_setup_priority() const {
 climate::ClimateTraits AirConditioner::traits() {
   auto traits = climate::ClimateTraits();
 
-  traits.set_supported_modes(
-      {climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL,
-       climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_FAN_ONLY,
-       climate::CLIMATE_MODE_DRY, climate::CLIMATE_MODE_HEAT_COOL});
+  traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL, climate::CLIMATE_MODE_HEAT,
+                              climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_DRY,
+                              climate::CLIMATE_MODE_HEAT_COOL});
 
-  traits.set_supported_fan_modes(
-      {climate::CLIMATE_FAN_OFF, climate::CLIMATE_FAN_AUTO,
-       climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_FOCUS,
-       climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_MIDDLE,
-       climate::CLIMATE_FAN_HIGH});
+  traits.set_supported_fan_modes({climate::CLIMATE_FAN_OFF, climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW,
+                                  climate::CLIMATE_FAN_FOCUS, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_MIDDLE,
+                                  climate::CLIMATE_FAN_HIGH});
 
-  traits.set_supported_swing_modes(
-      {climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
-       climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
+  traits.set_supported_swing_modes({climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
+                                    climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
 
   traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
   traits.set_visual_target_temperature_step(1.0f);
@@ -134,51 +125,51 @@ void AirConditioner::send_status() {
 
   std::vector<uint8_t> status{
       0xF4,
-      0xF5, // 1
-      0x00, // 2
-      0x40, // 3
-      0x29, // 4
-      0x00, // 5
-      0x00, // 6
-      0x01, // 7
-      0x01, // 8
-      0xFE, // 9
-      0x01, // 10
-      0x00, // 11
-      0x00, // 12
-      0x65, // 13
-      0x00, // 14
-      0x00, // 15
-      0x00, // 16
-      0x00, // 17
-      0x00, // 18
-      0x00, // 19
-      0x00, // 20
-      0x00, // 21
-      0x00, // 22
-      0x04, // 23
-      0x00, // 24
-      0x00, // 25
-      0x00, // 26
-      0x00, // 27
-      0x00, // 28
-      0x00, // 29
-      0x00, // 30
-      0x00, // 31
-      0x00, // 32
-      0x00, // 33
-      0x00, // 34
-      0x00, // 35
-      0x00, // 36
-      0x00, // 37
-      0x00, // 38
-      0x00, // 39
-      0x00, // 40
-      0x00, // 41
-      0x00, // 42
-      0x00, // 43
-      0x00, // 44
-      0x00  // 45
+      0xF5,  // 1
+      0x00,  // 2
+      0x40,  // 3
+      0x29,  // 4
+      0x00,  // 5
+      0x00,  // 6
+      0x01,  // 7
+      0x01,  // 8
+      0xFE,  // 9
+      0x01,  // 10
+      0x00,  // 11
+      0x00,  // 12
+      0x65,  // 13
+      0x00,  // 14
+      0x00,  // 15
+      0x00,  // 16
+      0x00,  // 17
+      0x00,  // 18
+      0x00,  // 19
+      0x00,  // 20
+      0x00,  // 21
+      0x00,  // 22
+      0x04,  // 23
+      0x00,  // 24
+      0x00,  // 25
+      0x00,  // 26
+      0x00,  // 27
+      0x00,  // 28
+      0x00,  // 29
+      0x00,  // 30
+      0x00,  // 31
+      0x00,  // 32
+      0x00,  // 33
+      0x00,  // 34
+      0x00,  // 35
+      0x00,  // 36
+      0x00,  // 37
+      0x00,  // 38
+      0x00,  // 39
+      0x00,  // 40
+      0x00,  // 41
+      0x00,  // 42
+      0x00,  // 43
+      0x00,  // 44
+      0x00   // 45
   };
 
   if (next_hvac_settings.mode != nullopt) {
@@ -191,7 +182,7 @@ void AirConditioner::send_status() {
       uint8_t m_mode = mode << 1;
       m_mode |= (1ul << 0);
       m_mode = m_mode << 4;
-      m_mode |= 0b00001100; // To on
+      m_mode |= 0b00001100;  // To on
 
       status[18] = m_mode;
       next_hvac_settings.target_temperature = this->target_temperature;
@@ -211,9 +202,9 @@ void AirConditioner::send_status() {
     tempX |= (1ul << 0);
     status[19] = tempX;
   }
-  
+
   status[36] = 0b01000000;
-  
+
   if (display_enable) {
     status[36] = 0b11000000;
   } else {
@@ -241,7 +232,6 @@ void AirConditioner::send_status() {
     status[16] = fanX;
   }
 
-  
   send_raw(status);
   this->next_hvac_settings_ = nullopt;
   ESP_LOGD(TAG, "send_status");
@@ -272,17 +262,13 @@ ParseStatus AirConditioner::parse_ac_message_byte_() {
   }
 
   if (this->rx_buffer_[0] != 0xF4 || this->rx_buffer_[1] != 0xF5) {
-    ESP_LOGD(TAG, "Wrong magic start sequence 0x%x 0x%x.", this->rx_buffer_[0],
-             this->rx_buffer_[1]);
+    ESP_LOGD(TAG, "Wrong magic start sequence 0x%x 0x%x.", this->rx_buffer_[0], this->rx_buffer_[1]);
     return ParseStatus::PARSE_ERROR;
   }
 
   std::vector<uint8_t> payload(rx_buffer_.begin() + 2, rx_buffer_.end() - 4);
-  if (at > 8 && this->rx_buffer_[at] == 0xFB &&
-      this->rx_buffer_[at - 1] == 0xF4) {
-
-    std::vector<uint8_t> payload_for_crc(rx_buffer_.begin(),
-                                         rx_buffer_.end() - 4);
+  if (at > 8 && this->rx_buffer_[at] == 0xFB && this->rx_buffer_[at - 1] == 0xF4) {
+    std::vector<uint8_t> payload_for_crc(rx_buffer_.begin(), rx_buffer_.end() - 4);
 
     auto const checksum = this->checksum(std::move(payload_for_crc));
 
@@ -294,8 +280,7 @@ ParseStatus AirConditioner::parse_ac_message_byte_() {
     uint8_t provided_cr2 = rx_buffer_[at - 2];
 
     if (cr1 != provided_cr1 || cr2 != provided_cr2) {
-      ESP_LOGD(TAG, "Not valid checksum, expected: 0x%x 0x%x, got 0x%x 0x%x.",
-               cr1, cr2, provided_cr1, provided_cr2);
+      ESP_LOGD(TAG, "Not valid checksum, expected: 0x%x 0x%x, got 0x%x 0x%x.", cr1, cr2, provided_cr1, provided_cr2);
       return ParseStatus::PARSE_ERROR;
     }
   } else {
@@ -303,8 +288,7 @@ ParseStatus AirConditioner::parse_ac_message_byte_() {
     return ParseStatus::NOT_FULL;
   }
 
-  ESP_LOGD(TAG, "Parsing message that seem to be OK: %s",
-           format_hex_pretty(payload).c_str());
+  ESP_LOGD(TAG, "Parsing message that seem to be OK: %s", format_hex_pretty(payload).c_str());
   decode_message(payload);
 
   if (waiting_for_response) {
@@ -371,15 +355,15 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
       nullopt,
       nullopt,
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_LOW, //"1",
+      climate::ClimateFanMode::CLIMATE_FAN_LOW,  //"1",
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_FOCUS, //"2",
+      climate::ClimateFanMode::CLIMATE_FAN_FOCUS,  //"2",
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_MEDIUM, //"3",
+      climate::ClimateFanMode::CLIMATE_FAN_MEDIUM,  //"3",
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_MIDDLE, //"4",
+      climate::ClimateFanMode::CLIMATE_FAN_MIDDLE,  //"4",
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_HIGH, //"5"
+      climate::ClimateFanMode::CLIMATE_FAN_HIGH,  //"5"
   };
 
   // Is ON
@@ -432,23 +416,17 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
 
 #ifdef USE_SENSOR
   {
-    update_sub_sensor_(SubSensorType::INDOOR_TEMPERATURE,
-                       static_cast<float>(payload[18]));
-    update_sub_sensor_(SubSensorType::INDOOR_COIL_TEMPERATURE,
-                       static_cast<float>(payload[19]));
+    update_sub_sensor_(SubSensorType::INDOOR_TEMPERATURE, static_cast<float>(payload[18]));
+    update_sub_sensor_(SubSensorType::INDOOR_COIL_TEMPERATURE, static_cast<float>(payload[19]));
 
-    update_sub_sensor_(SubSensorType::INDOOR_HUMIDITY,
-                       static_cast<float>(payload[21]));
-    update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE,
-                       static_cast<float>(payload[40]));
-    update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE,
-                       static_cast<float>(payload[41]));
+    update_sub_sensor_(SubSensorType::INDOOR_HUMIDITY, static_cast<float>(payload[21]));
+    update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE, static_cast<float>(payload[40]));
+    update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, static_cast<float>(payload[41]));
 
     //  update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE,
     //  static_cast<float>(payload[41])); //OutDoor coil?
   }
 #endif
-
 }
 
 #ifdef USE_SENSOR
@@ -482,6 +460,6 @@ void AirConditioner::change_status(Status new_status) {
   last_status_change = millis();
 }
 
-} // namespace ac
-} // namespace hisense
-} // namespace esphome
+}  // namespace ac
+}  // namespace hisense
+}  // namespace esphome

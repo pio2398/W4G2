@@ -16,16 +16,10 @@ namespace esphome {
 namespace hisense {
 namespace ac {
 
-enum ParseStatus {
-  NOT_FULL,
-  PARSE_ERROR,
-  PARSE_OK
-};
+enum ParseStatus { NOT_FULL, PARSE_ERROR, PARSE_OK };
 
-class AirConditioner : public uart::UARTDevice,
-                       public Component,
-                       public climate::Climate {
-public:
+class AirConditioner : public uart::UARTDevice, public Component, public climate::Climate {
+ public:
   AirConditioner() = default;
 
   void setup() override;
@@ -37,23 +31,14 @@ public:
   climate::ClimateTraits traits() override;
 
   void send_raw(const std::vector<uint8_t> &payload);
-  void set_flow_control_pin(GPIOPin *flow_control_pin) {
-    this->flow_control_pin_ = flow_control_pin;
-  }
+  void set_flow_control_pin(GPIOPin *flow_control_pin) { this->flow_control_pin_ = flow_control_pin; }
   uint8_t waiting_for_response{0};
   void set_display_switch(bool state);
 
-protected:
+ protected:
   GPIOPin *flow_control_pin_{nullptr};
 
-  enum Status {
-    standby,
-    waiting_for_status_response,
-    waiting_for_change_confirm,
-    after_fail,
-    waiting_for_more,
-    reset
-  };
+  enum Status { standby, waiting_for_status_response, waiting_for_change_confirm, after_fail, waiting_for_more, reset };
   Status status = Status::standby;
 
   /// Override control to change settings of the climate device.
@@ -72,8 +57,7 @@ protected:
   uint32_t last_extra_log_print{0};
   bool print_extra_log_in_this_loop{true};
 
-  bool display_enable {true}; // Status of display screen of AC unit.
-
+  bool display_enable{true};  // Status of display screen of AC unit.
 
   float get_setup_priority() const override;
 
@@ -81,7 +65,6 @@ protected:
 
   void change_status(Status status);
 
-  
 #ifdef USE_SENSOR
  public:
   enum class SubSensorType {
@@ -93,7 +76,7 @@ protected:
     OUTDOOR_COIL_TEMPERATURE,
     INDOOR_TEMPERATURE,
     INDOOR_HUMIDITY,
-    //Not my
+    // Not my
     OUTDOOR_DEFROST_TEMPERATURE,
     OUTDOOR_IN_AIR_TEMPERATURE,
     OUTDOOR_OUT_AIR_TEMPERATURE,
@@ -109,10 +92,9 @@ protected:
  protected:
   static constexpr std::size_t SubSensorTypeCount = static_cast<std::size_t>(SubSensorType::SUB_SENSOR_TYPE_COUNT);
   void update_sub_sensor_(SubSensorType type, float value);
-  std::vector<sensor::Sensor*> sub_sensors_{SubSensorTypeCount, nullptr};
+  std::vector<sensor::Sensor *> sub_sensors_{SubSensorTypeCount, nullptr};
 
 #endif
-
 
   struct HvacSettings {
     esphome::optional<esphome::climate::ClimateMode> mode;
@@ -122,7 +104,7 @@ protected:
     esphome::optional<esphome::climate::ClimatePreset> preset;
     esphome::optional<bool> display;
 
-    HvacSettings(){};
+    HvacSettings() {};
     HvacSettings(const HvacSettings &) = default;
     HvacSettings &operator=(const HvacSettings &) = default;
   };
@@ -130,57 +112,63 @@ protected:
   optional<HvacSettings> next_hvac_settings_;
 
   climate::ClimateMode decode_climateMode(const int mode) {
-  if (mode == 0) {
-    return climate::CLIMATE_MODE_FAN_ONLY;
-  } else if (mode == 1) {
-    return climate::CLIMATE_MODE_HEAT;
-  } else if (mode == 2) {
-    return climate::CLIMATE_MODE_COOL;
-  } else if (mode == 3) {
-    return climate::CLIMATE_MODE_DRY;
-  } else if (mode == 4 or mode == 5 or mode == 6 or mode == 7) {
-    return climate::CLIMATE_MODE_AUTO;
-  } else if (mode == 12) {
+    if (mode == 0) {
+      return climate::CLIMATE_MODE_FAN_ONLY;
+    } else if (mode == 1) {
+      return climate::CLIMATE_MODE_HEAT;
+    } else if (mode == 2) {
+      return climate::CLIMATE_MODE_COOL;
+    } else if (mode == 3) {
+      return climate::CLIMATE_MODE_DRY;
+    } else if (mode == 4 or mode == 5 or mode == 6 or mode == 7) {
+      return climate::CLIMATE_MODE_AUTO;
+    } else if (mode == 12) {
+      return climate::CLIMATE_MODE_OFF;
+    }
     return climate::CLIMATE_MODE_OFF;
   }
-  return climate::CLIMATE_MODE_OFF;
-}
 
-int encode_climateMode(const climate::ClimateMode mode) {
-  switch (mode) {
-  case climate::CLIMATE_MODE_FAN_ONLY:
-    return 0;
-  case climate::CLIMATE_MODE_HEAT:
-    return 1;
-  case climate::CLIMATE_MODE_COOL:
-    return 2;
-  case climate::CLIMATE_MODE_DRY:
-    return 3;
-  case climate::CLIMATE_MODE_AUTO:
-    return 4;
-  case climate::CLIMATE_MODE_OFF:
-    return 12;
-  default:
-    return -1;
+  int encode_climateMode(const climate::ClimateMode mode) {
+    switch (mode) {
+      case climate::CLIMATE_MODE_FAN_ONLY:
+        return 0;
+      case climate::CLIMATE_MODE_HEAT:
+        return 1;
+      case climate::CLIMATE_MODE_COOL:
+        return 2;
+      case climate::CLIMATE_MODE_DRY:
+        return 3;
+      case climate::CLIMATE_MODE_AUTO:
+        return 4;
+      case climate::CLIMATE_MODE_OFF:
+        return 12;
+      default:
+        return -1;
+    }
   }
-}
 
-int encode_fan_mode(const climate::ClimateFanMode mode) {
-  switch (mode) {
-    case climate::CLIMATE_FAN_OFF:    return 0;
-    case climate::CLIMATE_FAN_AUTO:   return 1;
-    case climate::CLIMATE_FAN_LOW:    return 10;
-    case climate::CLIMATE_FAN_FOCUS:  return 12; // matches your traits() list
-    case climate::CLIMATE_FAN_MEDIUM: return 14;
-    case climate::CLIMATE_FAN_MIDDLE: return 16;
-    case climate::CLIMATE_FAN_HIGH:   return 18;
-    default: return 1; // fall back to auto
+  int encode_fan_mode(const climate::ClimateFanMode mode) {
+    switch (mode) {
+      case climate::CLIMATE_FAN_OFF:
+        return 0;
+      case climate::CLIMATE_FAN_AUTO:
+        return 1;
+      case climate::CLIMATE_FAN_LOW:
+        return 10;
+      case climate::CLIMATE_FAN_FOCUS:
+        return 12;  // matches your traits() list
+      case climate::CLIMATE_FAN_MEDIUM:
+        return 14;
+      case climate::CLIMATE_FAN_MIDDLE:
+        return 16;
+      case climate::CLIMATE_FAN_HIGH:
+        return 18;
+      default:
+        return 1;  // fall back to auto
+    }
   }
-}
 };
 
-
-
-} // namespace ac
-} // namespace hisense
-} // namespace esphome
+}  // namespace ac
+}  // namespace hisense
+}  // namespace esphome
