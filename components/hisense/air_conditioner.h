@@ -12,9 +12,19 @@
 #ifdef USE_SWITCH
 #include "esphome/components/switch/switch.h"
 #endif
+
 namespace esphome {
 namespace hisense {
 namespace ac {
+
+// Protocol notes (derived from the stock AEH-W4G2 firmware):
+//  * Frame: F4 F5 | dir flags len | ... | cmd sub | data | csum_hi csum_lo | F4 FB
+//  * Every 0xF4 between the F4 F5 header and the F4 FB trailer (checksum
+//    included) is byte-stuffed as F4 F4.
+//  * Indexes below use "payload" = unstuffed frame without the leading F4 F5,
+//    i.e. payload[n] == frame[n + 2]. Status reply command 0x66 is payload[11].
+//  * Control command 0x65: each field is a value plus a "write enable" bit;
+//    fields left at 0 are not changed by the unit.
 
 enum ParseStatus { NOT_FULL, PARSE_ERROR, PARSE_OK };
 
@@ -23,10 +33,9 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   AirConditioner() = default;
 
   void setup() override;
-
   void loop() override;
-
   void dump_config() override;
+  float get_setup_priority() const override;
 
   climate::ClimateTraits traits() override;
 
@@ -35,38 +44,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   uint8_t waiting_for_response{0};
   void set_display_switch(bool state);
 
- protected:
-  GPIOPin *flow_control_pin_{nullptr};
-
-  enum Status { standby, waiting_for_status_response, waiting_for_change_confirm, after_fail, waiting_for_more, reset };
-  Status status = Status::standby;
-
-  /// Override control to change settings of the climate device.
-  void control(const climate::ClimateCall &call) override;
-
-  ParseStatus parse_ac_message_byte_();
-
-  void decode_message(std::vector<uint8_t>);
-
-  void send_status();
-
-  std::vector<uint8_t> rx_buffer_;
-  uint32_t last_recived_{0};
-  uint32_t last_send_{0};
-  uint32_t last_status_change{0};
-  uint32_t last_extra_log_print{0};
-  bool print_extra_log_in_this_loop{true};
-
-  bool display_enable{true};  // Status of display screen of AC unit.
-
-  float get_setup_priority() const override;
-
-  short int checksum(const std::vector<uint8_t> &payload);
-
-  void change_status(Status status);
-
 #ifdef USE_SENSOR
- public:
   enum class SubSensorType {
     // Used data based sensors
     OUTDOOR_TEMPERATURE = 0,
@@ -88,12 +66,44 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
     BIG_DATA_FRAME_SUB_SENSORS = INDOOR_COIL_TEMPERATURE,
   };
   void set_sub_sensor(SubSensorType type, sensor::Sensor *sens);
+#endif
 
  protected:
+  GPIOPin *flow_control_pin_{nullptr};
+
+  enum Status { standby, waiting_for_status_response, waiting_for_change_confirm, after_fail, waiting_for_more, reset };
+  Status status = Status::standby;
+
+  void control(const climate::ClimateCall &call) override;
+
+  /// Read one byte from the UART.
+  bool read_rx_byte_(uint8_t *byte);
+  /// Feed one received (still stuffed) byte into the frame decoder.
+  ParseStatus feed_byte_(uint8_t byte);
+  ParseStatus check_frame_();
+  void decode_message(const std::vector<uint8_t> &payload);
+
+  void send_status();
+
+  std::vector<uint8_t> rx_buffer_;  // unstuffed frame being received
+  bool rx_in_frame_{false};
+  bool rx_pending_f4_{false};
+
+  uint32_t last_recived_{0};
+  uint32_t last_send_{0};
+  uint32_t last_status_change{0};
+  uint32_t last_extra_log_print{0};
+  bool print_extra_log_in_this_loop{true};
+
+  bool display_enable{true};  // Status of display screen of AC unit.
+
+  uint16_t checksum(const std::vector<uint8_t> &payload);
+  void change_status(Status status);
+
+#ifdef USE_SENSOR
   static constexpr std::size_t SubSensorTypeCount = static_cast<std::size_t>(SubSensorType::SUB_SENSOR_TYPE_COUNT);
   void update_sub_sensor_(SubSensorType type, float value);
   std::vector<sensor::Sensor *> sub_sensors_{SubSensorTypeCount, nullptr};
-
 #endif
 
   struct HvacSettings {
@@ -104,7 +114,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
     esphome::optional<esphome::climate::ClimatePreset> preset;
     esphome::optional<bool> display;
 
-    HvacSettings() {};
+    HvacSettings(){};
     HvacSettings(const HvacSettings &) = default;
     HvacSettings &operator=(const HvacSettings &) = default;
   };

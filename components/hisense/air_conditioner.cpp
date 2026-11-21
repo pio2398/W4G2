@@ -6,6 +6,11 @@ namespace hisense {
 namespace ac {
 static const char *const TAG = "climate.air_conditioner";
 
+static const uint8_t FRAME_ESC = 0xF4;
+static const uint8_t FRAME_START = 0xF5;
+static const uint8_t FRAME_END = 0xFB;
+static const size_t MAX_FRAME_LEN = 512;
+
 void AirConditioner::setup() {
   if (this->flow_control_pin_ != nullptr) {
     this->flow_control_pin_->setup();
@@ -13,6 +18,8 @@ void AirConditioner::setup() {
   this->last_status_change = millis();
   this->status = Status::standby;
 }
+bool AirConditioner::read_rx_byte_(uint8_t *byte) { return this->available() && this->read_byte(byte); }
+
 void AirConditioner::loop() {
   if (millis() - this->last_extra_log_print > 3000) {
     print_extra_log_in_this_loop = true;
@@ -24,15 +31,18 @@ void AirConditioner::loop() {
   if (millis() - this->last_recived_ > 10000 && millis() - this->last_status_change > 10000) {
     ESP_LOGD(TAG, "Stuck reset error");
     this->rx_buffer_.clear();
+    this->rx_in_frame_ = false;
+    this->rx_pending_f4_ = false;
     change_status(Status::after_fail);
     return;
   }
 
   if (status == Status::after_fail) {
     this->rx_buffer_.clear();
+    this->rx_in_frame_ = false;
+    this->rx_pending_f4_ = false;
     uint8_t byte;
-    while (available() && read_byte(&byte)) {
-      flush();
+    while (this->read_rx_byte_(&byte)) {
     }
 
     auto before_next_try = millis() - last_status_change > 8000;
@@ -65,31 +75,98 @@ void AirConditioner::loop() {
     return;
   }
 
-  int available_to_read = 0;
-  while ((available_to_read = this->available())) {
-    std::vector<uint8_t> rec_buffor{};
-    rec_buffor.resize(available_to_read, 0);
-
-    this->read_array(&rec_buffor[0], available_to_read);
-    this->rx_buffer_.insert(this->rx_buffer_.end(), rec_buffor.begin(), rec_buffor.end());
-
-    const auto parse_status = this->parse_ac_message_byte_();
+  uint8_t byte;
+  while (this->read_rx_byte_(&byte)) {
     this->last_recived_ = millis();
-    switch (parse_status) {
+    switch (this->feed_byte_(byte)) {
       case ParseStatus::PARSE_ERROR:
         ESP_LOGD(TAG, "Parse error");
-        this->rx_buffer_.clear();
         change_status(Status::after_fail);
         return;
       case ParseStatus::PARSE_OK:
-        this->rx_buffer_.clear();
         change_status(Status::standby);
         return;
       case ParseStatus::NOT_FULL:
-        change_status(Status::waiting_for_more);
+        if (this->rx_in_frame_)
+          change_status(Status::waiting_for_more);
         break;
     }
   }
+}
+
+ParseStatus AirConditioner::feed_byte_(uint8_t byte) {
+  if (this->rx_pending_f4_) {
+    this->rx_pending_f4_ = false;
+    if (byte == FRAME_START) {
+      // (Re)start of frame. Anything collected so far is dropped.
+      if (this->rx_in_frame_ && this->rx_buffer_.size() > 2)
+        ESP_LOGD(TAG, "Frame restarted, dropping %u bytes", (unsigned) this->rx_buffer_.size());
+      this->rx_buffer_.assign({FRAME_ESC, FRAME_START});
+      this->rx_in_frame_ = true;
+      return ParseStatus::NOT_FULL;
+    }
+    if (!this->rx_in_frame_)
+      return ParseStatus::NOT_FULL;
+    if (byte == FRAME_ESC) {
+      // Stuffed literal 0xF4.
+      this->rx_buffer_.push_back(FRAME_ESC);
+    } else if (byte == FRAME_END) {
+      this->rx_buffer_.push_back(FRAME_ESC);
+      this->rx_buffer_.push_back(FRAME_END);
+      this->rx_in_frame_ = false;
+      auto result = this->check_frame_();
+      this->rx_buffer_.clear();
+      return result;
+    } else {
+      // Unescaped F4 inside a frame: not valid, keep it to be lenient.
+      this->rx_buffer_.push_back(FRAME_ESC);
+      this->rx_buffer_.push_back(byte);
+    }
+  } else if (byte == FRAME_ESC) {
+    this->rx_pending_f4_ = true;
+    return ParseStatus::NOT_FULL;
+  } else if (this->rx_in_frame_) {
+    this->rx_buffer_.push_back(byte);
+  }
+
+  if (this->rx_buffer_.size() > MAX_FRAME_LEN) {
+    ESP_LOGD(TAG, "Frame too long");
+    this->rx_buffer_.clear();
+    this->rx_in_frame_ = false;
+    return ParseStatus::PARSE_ERROR;
+  }
+  return ParseStatus::NOT_FULL;
+}
+
+ParseStatus AirConditioner::check_frame_() {
+  const auto &buf = this->rx_buffer_;
+  if (buf.size() < 10) {
+    ESP_LOGD(TAG, "Frame too short: %u", (unsigned) buf.size());
+    return ParseStatus::PARSE_ERROR;
+  }
+  std::vector<uint8_t> payload_for_crc(buf.begin(), buf.end() - 4);
+  const uint16_t csum = this->checksum(payload_for_crc);
+  const uint8_t cr1 = (csum >> 8) & 0xFF;
+  const uint8_t cr2 = csum & 0xFF;
+  const uint8_t provided_cr1 = buf[buf.size() - 4];
+  const uint8_t provided_cr2 = buf[buf.size() - 3];
+  if (cr1 != provided_cr1 || cr2 != provided_cr2) {
+    ESP_LOGD(TAG, "Not valid checksum, expected: 0x%02X 0x%02X, got 0x%02X 0x%02X.", cr1, cr2, provided_cr1,
+             provided_cr2);
+    return ParseStatus::PARSE_ERROR;
+  }
+
+  std::vector<uint8_t> payload(buf.begin() + 2, buf.end() - 4);
+  ESP_LOGV(TAG, "Frame OK (%u bytes): %s", (unsigned) payload.size(), format_hex_pretty(payload).c_str());
+
+  this->decode_message(payload);
+
+  if (waiting_for_response) {
+    waiting_for_response = 0;
+  } else {
+    ESP_LOGD(TAG, "Not expected");
+  }
+  return ParseStatus::PARSE_OK;
 }
 
 float AirConditioner::get_setup_priority() const {
@@ -254,75 +331,35 @@ void AirConditioner::control(const climate::ClimateCall &call) {
   this->next_hvac_settings_ = std::move(next_hvac_settings);
 }
 
-ParseStatus AirConditioner::parse_ac_message_byte_() {
-  size_t at = this->rx_buffer_.size() - 1;
-
-  if (at < 6) {
-    return ParseStatus::NOT_FULL;
-  }
-
-  if (this->rx_buffer_[0] != 0xF4 || this->rx_buffer_[1] != 0xF5) {
-    ESP_LOGD(TAG, "Wrong magic start sequence 0x%x 0x%x.", this->rx_buffer_[0], this->rx_buffer_[1]);
-    return ParseStatus::PARSE_ERROR;
-  }
-
-  std::vector<uint8_t> payload(rx_buffer_.begin() + 2, rx_buffer_.end() - 4);
-  if (at > 8 && this->rx_buffer_[at] == 0xFB && this->rx_buffer_[at - 1] == 0xF4) {
-    std::vector<uint8_t> payload_for_crc(rx_buffer_.begin(), rx_buffer_.end() - 4);
-
-    auto const checksum = this->checksum(std::move(payload_for_crc));
-
-    uint8_t cr1 = (checksum >> 8) & 0xFF;
-    uint8_t cr2 = checksum & 0xFF;
-    size_t len = rx_buffer_.size();
-
-    uint8_t provided_cr1 = rx_buffer_[at - 3];
-    uint8_t provided_cr2 = rx_buffer_[at - 2];
-
-    if (cr1 != provided_cr1 || cr2 != provided_cr2) {
-      ESP_LOGD(TAG, "Not valid checksum, expected: 0x%x 0x%x, got 0x%x 0x%x.", cr1, cr2, provided_cr1, provided_cr2);
-      return ParseStatus::PARSE_ERROR;
-    }
-  } else {
-    ESP_LOGD(TAG, "Not found end sequence yet at: %d.", at);
-    return ParseStatus::NOT_FULL;
-  }
-
-  ESP_LOGD(TAG, "Parsing message that seem to be OK: %s", format_hex_pretty(payload).c_str());
-  decode_message(payload);
-
-  if (waiting_for_response) {
-    waiting_for_response = 0;
-  } else {
-    ESP_LOGD(TAG, "Not expected");
-  }
-
-  return ParseStatus::PARSE_OK;
-}
-
 void AirConditioner::dump_config() {
   ESP_LOGCONFIG(TAG, "Hisense:");
   LOG_PIN("  Flow Control Pin: ", this->flow_control_pin_);
 }
 
 void AirConditioner::send_raw(const std::vector<uint8_t> &payload) {
-  // Add F4 F5 at start
-
-  if (payload.empty()) {
+  if (payload.size() < 2)
     return;
-  }
-  auto const checksum = this->checksum(payload);
-  uint8_t cr1 = (checksum & 0x0000ff00) >> 8;
-  uint8_t cr2 = (checksum & 0x000000ff);
+  const uint16_t csum = this->checksum(payload);
+
+  // Everything between the F4 F5 header and the F4 FB trailer is byte-stuffed.
+  std::vector<uint8_t> frame(payload.begin(), payload.begin() + 2);
+  frame.reserve(payload.size() + 8);
+  auto put = [&frame](uint8_t b) {
+    frame.push_back(b);
+    if (b == FRAME_ESC)
+      frame.push_back(FRAME_ESC);
+  };
+  for (size_t i = 2; i < payload.size(); i++)
+    put(payload[i]);
+  put((csum >> 8) & 0xFF);
+  put(csum & 0xFF);
+  frame.push_back(FRAME_ESC);
+  frame.push_back(FRAME_END);
 
   if (this->flow_control_pin_ != nullptr)
     this->flow_control_pin_->digital_write(true);
 
-  this->write_array(payload);
-  this->write_byte(cr1);
-  this->write_byte(cr2);
-  this->write_byte(0xF4);
-  this->write_byte(0xFB);
+  this->write_array(frame);
   this->flush();
 
   if (this->flow_control_pin_ != nullptr)
@@ -332,17 +369,19 @@ void AirConditioner::send_raw(const std::vector<uint8_t> &payload) {
   last_send_ = millis();
 }
 
-short int AirConditioner::checksum(const std::vector<uint8_t> &payload) {
-  short int csum = 0;
-  int arrlen = payload.size();
-  for (int i = 2; i < arrlen; i++) {
-    csum = csum + payload[i];
-  }
+uint16_t AirConditioner::checksum(const std::vector<uint8_t> &payload) {
+  uint16_t csum = 0;
+  for (size_t i = 2; i < payload.size(); i++)
+    csum += payload[i];
   return csum;
 }
 
-void AirConditioner::decode_message(std::vector<uint8_t> payload) {
-  ESP_LOGD(TAG, "decode_message");
+void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
+  // Need at least up to the swing byte.
+  if (payload.size() < 34) {
+    ESP_LOGD(TAG, "Status frame too short: %u", (unsigned) payload.size());
+    return;
+  }
 
   static optional<climate::ClimateFanMode> decode_wind_codes[19]{
       climate::ClimateFanMode::CLIMATE_FAN_OFF,
@@ -388,9 +427,10 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
 
   // Fan speed
   {
-    auto wind = decode_wind_codes[payload[14]];
-    this->fan_mode = wind;
-    ESP_LOGD(TAG, "fan speed %d", wind);
+    if (payload[14] < sizeof(decode_wind_codes) / sizeof(decode_wind_codes[0])) {
+      auto wind = decode_wind_codes[payload[14]];
+      this->fan_mode = wind;
+    }
   }
 
   // Swig detect
@@ -420,8 +460,10 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
     update_sub_sensor_(SubSensorType::INDOOR_COIL_TEMPERATURE, static_cast<float>(payload[19]));
 
     update_sub_sensor_(SubSensorType::INDOOR_HUMIDITY, static_cast<float>(payload[21]));
-    update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE, static_cast<float>(payload[40]));
-    update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, static_cast<float>(payload[41]));
+    if (payload.size() > 41) {
+      update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE, static_cast<float>(payload[40]));
+      update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, static_cast<float>(payload[41]));
+    }
 
     //  update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE,
     //  static_cast<float>(payload[41])); //OutDoor coil?
