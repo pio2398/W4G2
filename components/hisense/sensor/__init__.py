@@ -41,6 +41,7 @@ CONF_INDOOR_HUMIDITY = "indoor_humidity"
 CONF_OUTDOOR_TEMPERATURE = "outdoor_temperature"
 CONF_SUPPLY_VOLTAGE = "supply_voltage"
 CONF_COMPRESSOR_FREQUENCY = "compressor_frequency"
+CONF_DISCHARGE_TEMPERATURE = "discharge_temperature"
 
 
 SENSOR_TYPES = {
@@ -89,6 +90,14 @@ SENSOR_TYPES = {
         icon=ICON_PULSE,
         accuracy_decimals=0,
         device_class=DEVICE_CLASS_FREQUENCY,
+        state_class=STATE_CLASS_MEASUREMENT,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
+    CONF_DISCHARGE_TEMPERATURE: sensor.sensor_schema(
+        unit_of_measurement=UNIT_CELSIUS,
+        icon=ICON_THERMOMETER,
+        accuracy_decimals=0,
+        device_class=DEVICE_CLASS_TEMPERATURE,
         state_class=STATE_CLASS_MEASUREMENT,
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
     ),

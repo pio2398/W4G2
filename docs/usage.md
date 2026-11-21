@@ -117,6 +117,8 @@ sensor:
       name: Power
     compressor_frequency: # compressor output frequency in Hz (0 when stopped)
       name: Compressor Frequency
+    discharge_temperature: # compressor discharge temperature in °C
+      name: Discharge Temperature
 
 text_sensor:
   - platform: hisense
