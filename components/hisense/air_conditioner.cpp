@@ -37,6 +37,7 @@ static const size_t MAX_FRAME_LEN = 512;
 void AirConditioner::setup() {
   if (this->flow_control_pin_ != nullptr) {
     this->flow_control_pin_->setup();
+    this->flow_control_pin_->digital_write(false);
   }
   this->last_status_change = millis();
   this->status = Status::standby;
@@ -63,13 +64,6 @@ bool AirConditioner::read_rx_byte_(uint8_t *byte) {
 }
 
 void AirConditioner::loop() {
-  if (millis() - this->last_extra_log_print > 3000) {
-    print_extra_log_in_this_loop = true;
-    this->last_extra_log_print = millis();
-  } else {
-    print_extra_log_in_this_loop = true;
-  }
-
   if (millis() - this->last_recived_ > 10000 && millis() - this->last_status_change > 10000) {
     ESP_LOGD(TAG, "Stuck reset error");
     this->rx_buffer_.clear();
@@ -86,34 +80,43 @@ void AirConditioner::loop() {
     uint8_t byte;
     while (this->read_rx_byte_(&byte)) {
     }
-
-    auto before_next_try = millis() - last_status_change > 8000;
-
-    if (print_extra_log_in_this_loop)
-      ESP_LOGD(TAG, "Waiting %d before asking for status after communitation fail.", before_next_try);
-
-    if (before_next_try <= 0) {
+    if (millis() - last_status_change > 3000) {
       ESP_LOGD(TAG, "Reset status.");
       change_status(Status::standby);
     }
-
     return;
   }
 
-  if (this->next_hvac_settings_) {
+  // The bus is half duplex: only send once the previous exchange is finished
+  // (reply received or timed out), otherwise the command collides with the
+  // unit's reply and is lost. Queued changes keep merging meanwhile.
+  if (this->next_hvac_settings_ && status == Status::standby) {
     send_status();
     change_status(Status::waiting_for_change_confirm);
     return;
   }
 
+  // A frame that stopped mid-way, or a request that got no reply: recover quickly
+  // instead of waiting for the 10 s stuck timer.
+  if (status == Status::waiting_for_more && millis() - this->last_recived_ > 1000) {
+    ESP_LOGD(TAG, "Incomplete frame (%u bytes), dropping", (unsigned) this->rx_buffer_.size());
+    change_status(Status::after_fail);
+    return;
+  }
+  if ((status == Status::waiting_for_status_response || status == Status::waiting_for_change_confirm) &&
+      millis() - this->last_send_ > 2000) {
+    ESP_LOGD(TAG, "No reply to request");
+    change_status(Status::standby);
+    return;
+  }
+
   if (millis() - this->last_recived_ > 2000 && status == Status::standby) {
-    ESP_LOGD(TAG, "Requsting status.");
+    ESP_LOGV(TAG, "Requesting status.");
+    // F4 F5 00 40 0C 00 00 01 01 FE 01 00 00 66 00 00 00 01 B3 F4 FB
     std::vector<uint8_t> requst_status{0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00, 0x01, 0x01,
                                        0xFE, 0x01, 0x00, 0x00, 0x66, 0x00, 0x00, 0x00};
     this->send_raw(requst_status);
-    // F4 F5 00 40 0C 00 00 01 01 FE 01 00 00 66 00 00 00 01 B3 F4 FB
     change_status(Status::waiting_for_status_response);
-
     return;
   }
 
@@ -547,6 +550,8 @@ void AirConditioner::set_display_switch(bool state) {
 }
 
 void AirConditioner::change_status(Status new_status) {
+  if (new_status != this->status)
+    ESP_LOGV(TAG, "Status %d -> %d", (int) this->status, (int) new_status);
   this->status = new_status;
   last_status_change = millis();
 }
