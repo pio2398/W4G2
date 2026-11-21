@@ -3,6 +3,7 @@
 #include "esphome/core/log.h"
 
 #include <cmath>
+#include <cstdio>
 
 #ifdef USE_LIBRETINY_VARIANT_RTL8710B
 #include "esphome/components/uart/uart_component_libretiny.h"
@@ -97,6 +98,25 @@ void AirConditioner::loop() {
     send_status();
     change_status(Status::waiting_for_change_confirm);
     return;
+  }
+
+  // Identify the unit once at start-up, before normal status polling.
+  if (this->identity_step_ < IDENTITY_STEPS) {
+    if (status == Status::standby) {
+      this->send_identity_query_();
+      change_status(Status::waiting_for_status_response);
+      return;
+    }
+    if (status == Status::waiting_for_status_response && millis() - this->last_send_ > 1500) {
+      if (++this->identity_attempts_ >= 3) {
+        ESP_LOGW(TAG, "No reply to identity query %u, skipping", this->identity_step_);
+        this->identity_attempts_ = 0;
+        if (++this->identity_step_ >= IDENTITY_STEPS)
+          this->identity_done_();
+      }
+      change_status(Status::standby);
+      return;
+    }
   }
 
   // A frame that stopped mid-way, or a request that got no reply: recover quickly
@@ -207,7 +227,9 @@ ParseStatus AirConditioner::check_frame_() {
   std::vector<uint8_t> payload(buf.begin() + 2, buf.end() - 4);
   ESP_LOGV(TAG, "Frame OK (%u bytes): %s", (unsigned) payload.size(), format_hex_pretty(payload).c_str());
 
-  if (payload.size() > 12 && (payload[11] == 0x66 || payload[11] == 0x65) && payload[12] == 0x00) {
+  if (this->handle_identity_reply_(payload)) {
+    // handled
+  } else if (payload.size() > 12 && (payload[11] == 0x66 || payload[11] == 0x65) && payload[12] == 0x00) {
     // 0x66 = status reply; 0x65 = reply to a control command, which carries the
     // full status in the same layout (verified live).
     this->decode_message(payload);
@@ -222,6 +244,72 @@ ParseStatus AirConditioner::check_frame_() {
     ESP_LOGD(TAG, "Not expected");
   }
   return ParseStatus::PARSE_OK;
+}
+
+void AirConditioner::dump_config() {
+  ESP_LOGCONFIG(TAG, "Hisense:");
+  LOG_PIN("  Flow Control Pin: ", this->flow_control_pin_);
+  const auto &c = this->caps_;
+  ESP_LOGCONFIG(TAG, "  Device type: %u/%u, product type: %d", c.device_type, c.device_subtype, c.product_type);
+  ESP_LOGCONFIG(TAG, "  Software: %u, protocol: %u", c.software_version, c.protocol_version);
+}
+
+void AirConditioner::send_identity_query_() {
+  // Same header as the status request; payload is cmd, sub, 0.
+  static const uint8_t QUERIES[IDENTITY_STEPS][2] = {{0x07, 0x01}, {0x0A, 0x04}, {0x66, 0x40}};
+  const uint8_t *q = QUERIES[this->identity_step_];
+  std::vector<uint8_t> frame{0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, q[0], q[1], 0x00};
+  ESP_LOGD(TAG, "Identity query %02X %02X", q[0], q[1]);
+  this->send_raw(frame);
+}
+
+bool AirConditioner::handle_identity_reply_(const std::vector<uint8_t> &payload) {
+  if (payload.size() < 13)
+    return false;
+  const uint8_t cmd = payload[11], sub = payload[12];
+  auto &c = this->caps_;
+  uint8_t step;
+  if (cmd == 0x07 && sub == 0x01) {
+    if (payload.size() < 18)
+      return false;
+    c.software_version = (payload[14] << 8) | payload[15];
+    c.protocol_version = (payload[16] << 8) | payload[17];
+    step = 0;
+  } else if (cmd == 0x0A && sub == 0x04) {
+    if (payload.size() < 16)
+      return false;
+    c.device_type = payload[14];
+    c.device_subtype = payload[15];
+    step = 1;
+  } else if (cmd == 0x66 && sub == 0x40) {
+    const uint8_t dev = c.device_type ? c.device_type : 1;
+    c.product_type = decode_product_type(dev, payload.data() + 11, payload.size() - 11);
+    step = 2;
+  } else {
+    return false;
+  }
+  if (step == this->identity_step_) {
+    this->identity_attempts_ = 0;
+    if (++this->identity_step_ >= IDENTITY_STEPS)
+      this->identity_done_();
+  }
+  return true;
+}
+
+void AirConditioner::identity_done_() {
+  const auto &c = this->caps_;
+  ESP_LOGI(TAG, "Unit: device type %u/%u, product type %d, software %u, protocol %u", c.device_type,
+           c.device_subtype, c.product_type, c.software_version, c.protocol_version);
+  if (!c.is_supported_device())
+    ESP_LOGW(TAG, "Device type %u is not an air conditioner this component supports", c.device_type);
+#ifdef USE_TEXT_SENSOR
+  if (this->identity_text_sensor_ != nullptr) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "type %u/%u, product %d, sw %u, protocol %u", c.device_type, c.device_subtype,
+             c.product_type, c.software_version, c.protocol_version);
+    this->identity_text_sensor_->publish_state(buf);
+  }
+#endif
 }
 
 void AirConditioner::update_custom_fan_modes_() { this->set_supported_custom_fan_modes({FAN_LOWER, FAN_HIGHER}); }
@@ -492,10 +580,6 @@ void AirConditioner::set_sleep_profile(uint8_t profile, bool send) {
     this->pending_settings_().sleep = profile;
 }
 
-void AirConditioner::dump_config() {
-  ESP_LOGCONFIG(TAG, "Hisense:");
-  LOG_PIN("  Flow Control Pin: ", this->flow_control_pin_);
-}
 
 void AirConditioner::send_raw(const std::vector<uint8_t> &payload) {
   if (payload.size() < 2)

@@ -129,6 +129,8 @@ text_sensor:
     hisense_id: hisense_ac
     faults:               # "OK" or a list of active fault flags
       name: Faults
+    identity:             # device type, product type, software and protocol version
+      name: AC Identity
 
 binary_sensor:
   - platform: hisense
@@ -184,6 +186,16 @@ ESPHome, which asks the unit to beep when it accepts the command (the stock modu
 it). Turning it off sends that byte as `00`: verified on a unit, the command still applies
 and the unit stays silent. The unit does not report it, so it is restored from
 flash at boot (`restore_mode`, default `RESTORE_DEFAULT_ON`).
+
+### Unit identification
+
+At start-up the component asks the indoor unit for its version (`07 01`), device type
+(`0A 04`) and capability bits (`66 40`), the same read-only queries the stock WiFi module
+sends. The capability bits are turned into the stock firmware's "product type" with a table
+ported from that firmware (`capabilities.h`).
+
+The result is logged at boot and in `dump_config`. You can also see it with the `identity`
+text sensor. If your unit reports something unexpected, please include that line in issues.
 
 ## LibreTiny (RTL8710BN) UART issues: handled by the component
 
