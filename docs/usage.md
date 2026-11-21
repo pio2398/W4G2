@@ -237,3 +237,5 @@ builds do not apply it, and it does not fix the race above.
   finished, and changes made in quick succession are merged.
 * The display is reported off while the unit is off and comes back on at power-on. The display
   bits are therefore sent only when the display switch changes.
+* Turbo makes the unit set the fan to high and the setpoint to 16 °C. Sleep drops the fan to low.
+  This is the unit's own behaviour.
