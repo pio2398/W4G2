@@ -289,12 +289,12 @@ void AirConditioner::send_status() {
     }
   }
 
-  status[36] = 0b01000000;
-
-  if (display_enable) {
-    status[36] = 0b11000000;
-  } else {
-    status[36] = 0b01000000;
+  // Display: bit 7 value, bit 6 write enable. Only sent when changing it; the
+  // unit reports the display off while powered off, so re-sending a cached
+  // value with every command could switch it off unintentionally.
+  if (next_hvac_settings.display.has_value()) {
+    this->display_enable = *next_hvac_settings.display;
+    status[36] = this->display_enable ? 0b11000000 : 0b01000000;
   }
 
   if (next_hvac_settings.swing_mode != nullopt) {
@@ -323,6 +323,10 @@ void AirConditioner::send_status() {
     fanX |= (1ul << 0);
     status[16] = fanX;
   }
+
+  auto settling = [this](Feature f) { this->settling_features_ |= 1u << static_cast<uint8_t>(f); };
+  if (next_hvac_settings.display.has_value())
+    settling(Feature::FEATURE_DISPLAY);
 
   send_raw(status);
   ESP_LOGD(TAG, "send_status");
@@ -461,6 +465,8 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
   }
   this->publish_state();
 
+  this->decode_features_(payload);
+
 #ifdef USE_SENSOR
   {
     update_sub_sensor_(SubSensorType::INDOOR_TEMPERATURE, static_cast<float>(payload[18]));
@@ -477,6 +483,38 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
   }
 #endif
 }
+
+void AirConditioner::decode_features_(const std::vector<uint8_t> &payload) {
+  // The unit's reply to a control command (0x65) can still show the old value of
+  // a feature it was just told to change (seen live for the display), so those
+  // features are only read back from the next status poll (0x66).
+  const bool command_reply = payload[11] == 0x65;
+  auto settled = [this, command_reply](Feature f) {
+    return !command_reply || !(this->settling_features_ & (1u << static_cast<uint8_t>(f)));
+  };
+  if (payload.size() > 35 && !this->next_hvac_settings_.has_value() && settled(Feature::FEATURE_DISPLAY)) {
+    // Display on/off is reported in bit 7 of byte 35 (verified live).
+    this->display_enable = (payload[35] & 0x80) != 0;
+#ifdef USE_SWITCH
+    this->publish_feature_(Feature::FEATURE_DISPLAY, this->display_enable);
+#endif
+  }
+  if (!command_reply)
+    this->settling_features_ = 0;
+}
+
+#ifdef USE_SWITCH
+void AirConditioner::publish_feature_(Feature feature, bool state) {
+  auto *sw = this->feature_switches_[static_cast<size_t>(feature)];
+  if (sw == nullptr)
+    return;
+  // Don't overwrite a change that is queued but not yet sent.
+  if (this->next_hvac_settings_.has_value())
+    return;
+  if (!sw->has_state() || sw->state != state)
+    sw->publish_state(state);
+}
+#endif
 
 #ifdef USE_SENSOR
 void AirConditioner::set_sub_sensor(SubSensorType type, sensor::Sensor *sens) {

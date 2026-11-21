@@ -92,6 +92,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   ParseStatus feed_byte_(uint8_t byte);
   ParseStatus check_frame_();
   void decode_message(const std::vector<uint8_t> &payload);
+  void decode_features_(const std::vector<uint8_t> &payload);
 
   void send_status();
 
@@ -104,12 +105,14 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   uint32_t last_status_change{0};
 
   bool display_enable{true};  // Status of display screen of AC unit.
+  uint8_t settling_features_{0};  // Feature bits changed by the last command, not yet confirmed by a poll
 
   uint16_t checksum(const std::vector<uint8_t> &payload);
   void change_status(Status status);
 
 #ifdef USE_SWITCH
   switch_::Switch *feature_switches_[static_cast<size_t>(Feature::FEATURE_COUNT)]{};
+  void publish_feature_(Feature feature, bool state);
 #endif
 
 #ifdef USE_SENSOR

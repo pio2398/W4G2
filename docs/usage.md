@@ -123,5 +123,8 @@ builds do not apply it, and it does not fix the race above.
 
 * The unit answers every control command (0x65) with a full status frame in the same layout
   as the 0x66 reply. The component uses it to confirm changes within about 0.5 s.
+* That reply can still show the old display state. Switch features are confirmed by the next poll.
 * The bus is half duplex. Commands are queued and sent only when the previous exchange has
   finished, and changes made in quick succession are merged.
+* The display is reported off while the unit is off and comes back on at power-on. The display
+  bits are therefore sent only when the display switch changes.
