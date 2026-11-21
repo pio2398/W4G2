@@ -40,6 +40,7 @@ CONF_INDOOR_TEMPERATURE = "indoor_temperature"
 CONF_INDOOR_HUMIDITY = "indoor_humidity"
 CONF_OUTDOOR_TEMPERATURE = "outdoor_temperature"
 CONF_SUPPLY_VOLTAGE = "supply_voltage"
+CONF_COMPRESSOR_FREQUENCY = "compressor_frequency"
 
 
 SENSOR_TYPES = {
@@ -80,6 +81,14 @@ SENSOR_TYPES = {
         icon=ICON_WATER_PERCENT,
         accuracy_decimals=0,
         device_class=DEVICE_CLASS_HUMIDITY,
+        state_class=STATE_CLASS_MEASUREMENT,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
+    CONF_COMPRESSOR_FREQUENCY: sensor.sensor_schema(
+        unit_of_measurement=UNIT_HERTZ,
+        icon=ICON_PULSE,
+        accuracy_decimals=0,
+        device_class=DEVICE_CLASS_FREQUENCY,
         state_class=STATE_CLASS_MEASUREMENT,
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
     ),

@@ -550,6 +550,9 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
   };
   update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE, signed_or_nan(42));
   update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, signed_or_nan(43));
+  // Compressor output frequency in Hz (ramps; byte 39 is the target frequency).
+  if (payload.size() > 41)
+    update_sub_sensor_(SubSensorType::COMPRESSOR_FREQUENCY, (float) payload[41]);
   if (payload.size() > 48)
     update_sub_sensor_(SubSensorType::SUPPLY_VOLTAGE, (float) ((payload[47] << 8) | payload[48]));
   // f_electricity in the stock firmware (units not confirmed).

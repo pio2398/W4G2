@@ -115,6 +115,8 @@ sensor:
       name: Supply Voltage
     power:                # raw "f_electricity" value from the stock firmware (unit unknown; diagnostic)
       name: Power
+    compressor_frequency: # compressor output frequency in Hz (0 when stopped)
+      name: Compressor Frequency
 
 switch:
   - platform: hisense
