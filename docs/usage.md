@@ -123,3 +123,5 @@ builds do not apply it, and it does not fix the race above.
 
 * The unit answers every control command (0x65) with a full status frame in the same layout
   as the 0x66 reply. The component uses it to confirm changes within about 0.5 s.
+* The bus is half duplex. Commands are queued and sent only when the previous exchange has
+  finished, and changes made in quick succession are merged.

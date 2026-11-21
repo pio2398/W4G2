@@ -118,6 +118,12 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   };
 
   optional<HvacSettings> next_hvac_settings_;
+  /// Pending settings, created on demand so several changes merge into one frame.
+  HvacSettings &pending_settings_() {
+    if (!this->next_hvac_settings_.has_value())
+      this->next_hvac_settings_ = HvacSettings();
+    return *this->next_hvac_settings_;
+  }
 
   climate::ClimateMode decode_climateMode(const int mode) {
     if (mode == 0) {
@@ -130,8 +136,6 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
       return climate::CLIMATE_MODE_DRY;
     } else if (mode == 4 or mode == 5 or mode == 6 or mode == 7) {
       return climate::CLIMATE_MODE_AUTO;
-    } else if (mode == 12) {
-      return climate::CLIMATE_MODE_OFF;
     }
     return climate::CLIMATE_MODE_OFF;
   }
@@ -147,6 +151,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
       case climate::CLIMATE_MODE_DRY:
         return 3;
       case climate::CLIMATE_MODE_AUTO:
+      case climate::CLIMATE_MODE_HEAT_COOL:
         return 4;
       case climate::CLIMATE_MODE_OFF:
         return 12;

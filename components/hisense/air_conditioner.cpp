@@ -2,6 +2,8 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
+#include <cmath>
+
 #ifdef USE_LIBRETINY_VARIANT_RTL8710B
 #include "esphome/components/uart/uart_component_libretiny.h"
 #include <ArduinoPrivate.h>
@@ -231,7 +233,7 @@ climate::ClimateTraits AirConditioner::traits() {
 
   traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL, climate::CLIMATE_MODE_HEAT,
                               climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_DRY,
-                              climate::CLIMATE_MODE_HEAT_COOL});
+                              climate::CLIMATE_MODE_AUTO});
 
   traits.set_supported_fan_modes({climate::CLIMATE_FAN_OFF, climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW,
                                   climate::CLIMATE_FAN_FOCUS, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_MIDDLE,
@@ -241,95 +243,50 @@ climate::ClimateTraits AirConditioner::traits() {
                                     climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
 
   traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
+  traits.set_visual_min_temperature(16.0f);
+  traits.set_visual_max_temperature(32.0f);
   traits.set_visual_target_temperature_step(1.0f);
+  traits.set_visual_current_temperature_step(1.0f);
 
   return traits;
 }
+
 void AirConditioner::send_status() {
   if (this->next_hvac_settings_ == nullopt) {
     ESP_LOGD(TAG, "send_status nullopt");
     return;
   }
   auto next_hvac_settings = next_hvac_settings_.value();
+  this->next_hvac_settings_ = nullopt;
 
-  std::vector<uint8_t> status{
-      0xF4,
-      0xF5,  // 1
-      0x00,  // 2
-      0x40,  // 3
-      0x29,  // 4
-      0x00,  // 5
-      0x00,  // 6
-      0x01,  // 7
-      0x01,  // 8
-      0xFE,  // 9
-      0x01,  // 10
-      0x00,  // 11
-      0x00,  // 12
-      0x65,  // 13
-      0x00,  // 14
-      0x00,  // 15
-      0x00,  // 16
-      0x00,  // 17
-      0x00,  // 18
-      0x00,  // 19
-      0x00,  // 20
-      0x00,  // 21
-      0x00,  // 22
-      0x04,  // 23
-      0x00,  // 24
-      0x00,  // 25
-      0x00,  // 26
-      0x00,  // 27
-      0x00,  // 28
-      0x00,  // 29
-      0x00,  // 30
-      0x00,  // 31
-      0x00,  // 32
-      0x00,  // 33
-      0x00,  // 34
-      0x00,  // 35
-      0x00,  // 36
-      0x00,  // 37
-      0x00,  // 38
-      0x00,  // 39
-      0x00,  // 40
-      0x00,  // 41
-      0x00,  // 42
-      0x00,  // 43
-      0x00,  // 44
-      0x00   // 45
-  };
+  std::vector<uint8_t> status(46, 0x00);
+  const uint8_t header[] = {0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x65};
+  std::copy(std::begin(header), std::end(header), status.begin());
+  status[23] = 0x04;
 
   if (next_hvac_settings.mode != nullopt) {
-    int mode = encode_climateMode((next_hvac_settings.mode.value()));
-
     if (next_hvac_settings.mode.value() == climate::CLIMATE_MODE_OFF) {
-      status[18] = 0b00000100;
-
+      status[18] = 0b00000100;  // power write-enable, power = 0
     } else {
-      uint8_t m_mode = mode << 1;
-      m_mode |= (1ul << 0);
-      m_mode = m_mode << 4;
-      m_mode |= 0b00001100;  // To on
-
-      status[18] = m_mode;
-      next_hvac_settings.target_temperature = this->target_temperature;
+      int mode = encode_climateMode(next_hvac_settings.mode.value());
+      if (mode < 0 || mode > 7) {
+        ESP_LOGW(TAG, "Unsupported mode %d", (int) next_hvac_settings.mode.value());
+        return;
+      }
+      // mode in bits 5-7 (+ write enable bit 4), power on bit 3 (+ write enable bit 2)
+      status[18] = (uint8_t) ((mode << 5) | 0x10 | 0x0C);
+      if (next_hvac_settings.target_temperature == nullopt && !std::isnan(this->target_temperature))
+        next_hvac_settings.target_temperature = this->target_temperature;
     }
   }
 
   if (next_hvac_settings.target_temperature != nullopt) {
-    auto my_tmp = static_cast<uint8_t>(next_hvac_settings.target_temperature.value());
-    if (!(my_tmp > 16ul || my_tmp < 30ul)) {
-      ESP_LOGD(TAG, "Not valid tmp!");
-      return;
+    int my_tmp = (int) lroundf(next_hvac_settings.target_temperature.value());
+    if (my_tmp < 16 || my_tmp > 32) {
+      ESP_LOGW(TAG, "Target temperature %d out of range 16..32, not sent", my_tmp);
+    } else {
+      status[19] = (uint8_t) ((my_tmp << 1) | 1);
     }
-
-    uint8_t c = my_tmp;
-    uint8_t tempX = 0;
-    tempX = (c << 1);
-    tempX |= (1ul << 0);
-    status[19] = tempX;
   }
 
   status[36] = 0b01000000;
@@ -341,16 +298,22 @@ void AirConditioner::send_status() {
   }
 
   if (next_hvac_settings.swing_mode != nullopt) {
-    // TODO: Combine with decoding
-    auto next_swing_setting = next_hvac_settings.swing_mode;
-    if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_BOTH) {
-      status[32] = 0b11110000;
-    } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_OFF) {
-      status[32] = 0b01010000;
-    } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_VERTICAL) {
-      status[32] = 0b11010000;
-    } else if (next_swing_setting == climate::ClimateSwingMode::CLIMATE_SWING_HORIZONTAL) {
-      status[32] = 0b01110000;
+    // bit7 up/down (+bit6 write enable), bit5 left/right (+bit4 write enable)
+    switch (next_hvac_settings.swing_mode.value()) {
+      case climate::CLIMATE_SWING_BOTH:
+        status[32] = 0b11110000;
+        break;
+      case climate::CLIMATE_SWING_OFF:
+        status[32] = 0b01010000;
+        break;
+      case climate::CLIMATE_SWING_VERTICAL:
+        status[32] = 0b11010000;
+        break;
+      case climate::CLIMATE_SWING_HORIZONTAL:
+        status[32] = 0b01110000;
+        break;
+      default:
+        break;
     }
   }
 
@@ -362,25 +325,21 @@ void AirConditioner::send_status() {
   }
 
   send_raw(status);
-  this->next_hvac_settings_ = nullopt;
   ESP_LOGD(TAG, "send_status");
 }
 
 void AirConditioner::control(const climate::ClimateCall &call) {
-  auto next_hvac_settings = HvacSettings();
-
+  auto &next = this->pending_settings_();
   if (call.get_mode().has_value())
-    next_hvac_settings.mode = call.get_mode();
+    next.mode = call.get_mode();
   if (call.get_fan_mode().has_value())
-    next_hvac_settings.fan_mode = call.get_fan_mode();
+    next.fan_mode = call.get_fan_mode();
   if (call.get_swing_mode().has_value())
-    next_hvac_settings.swing_mode = call.get_swing_mode();
+    next.swing_mode = call.get_swing_mode();
   if (call.get_target_temperature().has_value())
-    next_hvac_settings.target_temperature = call.get_target_temperature();
+    next.target_temperature = call.get_target_temperature();
   if (call.get_preset().has_value())
-    next_hvac_settings.preset = call.get_preset();
-
-  this->next_hvac_settings_ = std::move(next_hvac_settings);
+    next.preset = call.get_preset();
 }
 
 void AirConditioner::dump_config() {
@@ -457,25 +416,14 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
       climate::ClimateFanMode::CLIMATE_FAN_HIGH,  //"5"
   };
 
-  // Is ON
-  {
-    uint8_t mask = 0b00001000;
-    bool is_on = ((payload[16] & mask) != 0);
-    if (is_on) {
-      auto z = decode_climateMode((payload[16] >> 4));
-      this->mode = z;
-      ESP_LOGD(TAG, "mode %d", z);
-    } else {
-      ESP_LOGD(TAG, "Seem to be OFF.");
-      this->mode = climate::CLIMATE_MODE_OFF;
-    }
+  if ((payload[16] & 0b00001000) != 0) {
+    this->mode = decode_climateMode(payload[16] >> 4);
+  } else {
+    this->mode = climate::CLIMATE_MODE_OFF;
   }
 
-  // Target temp
-  {
-    auto temp = payload[17];
-    this->target_temperature = temp;
-  }
+  this->target_temperature = payload[17];
+  this->current_temperature = payload[18] <= 128 ? (float) payload[18] : NAN;
 
   // Fan speed
   {
@@ -485,25 +433,20 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
     }
   }
 
-  // Swig detect
   {
-    uint8_t updown_mask = 0b01000000;
-    bool up_down = (payload[33] & updown_mask) != 0;
-
-    uint8_t lr_mask = 0b10000000;
-    bool left_right = (payload[33] & lr_mask) != 0;
-
-    if (left_right && up_down) {
-      swing_mode = climate::ClimateSwingMode::CLIMATE_SWING_BOTH;
-    } else if (left_right) {
-      swing_mode = climate::ClimateSwingMode::CLIMATE_SWING_VERTICAL;
+    // bit7 = up/down louver (shown as vertical swing), bit6 = left/right.
+    bool up_down = (payload[33] & 0b10000000) != 0;
+    bool left_right = (payload[33] & 0b01000000) != 0;
+    if (up_down && left_right) {
+      this->swing_mode = climate::CLIMATE_SWING_BOTH;
     } else if (up_down) {
-      swing_mode = climate::ClimateSwingMode::CLIMATE_SWING_HORIZONTAL;
+      this->swing_mode = climate::CLIMATE_SWING_VERTICAL;
+    } else if (left_right) {
+      this->swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
     } else {
-      swing_mode = climate::ClimateSwingMode::CLIMATE_SWING_OFF;
+      this->swing_mode = climate::CLIMATE_SWING_OFF;
     }
   }
-  ESP_LOGD(TAG, "acc status new");
   this->publish_state();
 
 #ifdef USE_SENSOR
@@ -543,9 +486,7 @@ void AirConditioner::update_sub_sensor_(SubSensorType type, float value) {
 #endif
 
 void AirConditioner::set_display_switch(bool state) {
-  auto next_hvac_settings = HvacSettings();
-  next_hvac_settings.display = state;
-  this->next_hvac_settings_ = std::move(next_hvac_settings);
+  this->pending_settings_().display = state;
   display_enable = state;
 }
 
