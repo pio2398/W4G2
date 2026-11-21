@@ -108,6 +108,14 @@ switch:
 ## Additional options and entities
 
 ```yaml
+sensor:
+  - platform: hisense
+    hisense_id: hisense_ac
+    supply_voltage:       # mains voltage reported by the unit
+      name: Supply Voltage
+    power:                # raw "f_electricity" value from the stock firmware (unit unknown; diagnostic)
+      name: Power
+
 switch:
   - platform: hisense
     hisense_id: hisense_ac

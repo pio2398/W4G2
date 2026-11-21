@@ -74,6 +74,8 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
     COMPRESSOR_FREQUENCY,
     COMPRESSOR_CURRENT,
     EXPANSION_VALVE_OPEN_DEGREE,
+    // Added from stock firmware analysis
+    SUPPLY_VOLTAGE,
     SUB_SENSOR_TYPE_COUNT,
     BIG_DATA_FRAME_SUB_SENSORS = INDOOR_COIL_TEMPERATURE,
   };

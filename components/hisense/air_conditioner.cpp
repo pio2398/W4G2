@@ -550,6 +550,16 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
   };
   update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE, signed_or_nan(42));
   update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, signed_or_nan(43));
+  if (payload.size() > 48)
+    update_sub_sensor_(SubSensorType::SUPPLY_VOLTAGE, (float) ((payload[47] << 8) | payload[48]));
+  // f_electricity in the stock firmware (units not confirmed).
+  if (payload.size() > 143) {
+    // Little-endian: byte 142 is the low byte. It is a copy of bytes 53:54
+    // (big-endian) on the units seen so far, e.g. 53:54 = 06 40, 142:143 = 40 06.
+    uint16_t power = (payload[143] << 8) | payload[142];
+    ESP_LOGV(TAG, "Power raw 0x%04X", power);
+    update_sub_sensor_(SubSensorType::POWER, (float) power);
+  }
 #endif
 }
 
