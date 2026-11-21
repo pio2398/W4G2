@@ -43,6 +43,7 @@ void AirConditioner::setup() {
   }
   this->last_status_change = millis();
   this->status = Status::standby;
+  this->update_custom_fan_modes_();
 #ifdef USE_LIBRETINY_VARIANT_RTL8710B
   if (auto *u = ambz_uart(this->parent_)) {
     UART_RxCmd(u, ENABLE);
@@ -223,6 +224,62 @@ ParseStatus AirConditioner::check_frame_() {
   return ParseStatus::PARSE_OK;
 }
 
+void AirConditioner::update_custom_fan_modes_() { this->set_supported_custom_fan_modes({FAN_LOWER, FAN_HIGHER}); }
+
+optional<uint8_t> AirConditioner::fan_code_from_call_(const climate::ClimateCall &call) {
+  if (call.has_custom_fan_mode()) {
+    auto name = call.get_custom_fan_mode();
+    if (name == FAN_LOWER)
+      return 5;
+    if (name == FAN_HIGHER)
+      return 9;
+    return {};
+  }
+  if (!call.get_fan_mode().has_value())
+    return {};
+  switch (*call.get_fan_mode()) {
+    case climate::CLIMATE_FAN_AUTO:
+      return 1;
+    case climate::CLIMATE_FAN_LOW:
+      return 6;
+    case climate::CLIMATE_FAN_MEDIUM:
+      return 7;
+    case climate::CLIMATE_FAN_HIGH:
+      return 8;
+    default:
+      return {};
+  }
+}
+
+void AirConditioner::publish_fan_code_(uint8_t code) {
+  switch (code) {
+    case 1:
+      this->set_fan_mode_(climate::CLIMATE_FAN_AUTO);
+      break;
+    case 2:
+    case 6:
+      this->set_fan_mode_(climate::CLIMATE_FAN_LOW);
+      break;
+    case 3:
+    case 7:
+      this->set_fan_mode_(climate::CLIMATE_FAN_MEDIUM);
+      break;
+    case 4:
+    case 8:
+      this->set_fan_mode_(climate::CLIMATE_FAN_HIGH);
+      break;
+    case 5:
+      this->set_custom_fan_mode_(FAN_LOWER);
+      break;
+    case 9:
+      this->set_custom_fan_mode_(FAN_HIGHER);
+      break;
+    default:
+      ESP_LOGD(TAG, "Unknown fan code %u", code);
+      break;
+  }
+}
+
 float AirConditioner::get_setup_priority() const {
   // After UART bus
   return setup_priority::BUS - 1.0f;
@@ -235,9 +292,9 @@ climate::ClimateTraits AirConditioner::traits() {
                               climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_DRY,
                               climate::CLIMATE_MODE_AUTO});
 
-  traits.set_supported_fan_modes({climate::CLIMATE_FAN_OFF, climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW,
-                                  climate::CLIMATE_FAN_FOCUS, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_MIDDLE,
-                                  climate::CLIMATE_FAN_HIGH});
+  // 5-speed units add the custom "Lower" and "Higher" modes (update_custom_fan_modes_).
+  traits.set_supported_fan_modes(
+      {climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH});
 
   traits.set_supported_swing_modes({climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
                                     climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
@@ -317,12 +374,8 @@ void AirConditioner::send_status() {
     }
   }
 
-  if (next_hvac_settings.fan_mode != nullopt) {
-    uint8_t fan_raw = static_cast<uint8_t>(encode_fan_mode(next_hvac_settings.fan_mode.value()));
-    uint8_t fanX = (fan_raw << 1);
-    fanX |= (1ul << 0);
-    status[16] = fanX;
-  }
+  if (next_hvac_settings.fan_code.has_value())
+    status[16] = (uint8_t) ((*next_hvac_settings.fan_code << 1) | 1);
 
   auto settling = [this](Feature f) { this->settling_features_ |= 1u << static_cast<uint8_t>(f); };
   if (next_hvac_settings.display.has_value())
@@ -336,8 +389,8 @@ void AirConditioner::control(const climate::ClimateCall &call) {
   auto &next = this->pending_settings_();
   if (call.get_mode().has_value())
     next.mode = call.get_mode();
-  if (call.get_fan_mode().has_value())
-    next.fan_mode = call.get_fan_mode();
+  if (auto code = this->fan_code_from_call_(call))
+    next.fan_code = code;
   if (call.get_swing_mode().has_value())
     next.swing_mode = call.get_swing_mode();
   if (call.get_target_temperature().has_value())
@@ -410,28 +463,6 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
     return;
   }
 
-  static optional<climate::ClimateFanMode> decode_wind_codes[19]{
-      climate::ClimateFanMode::CLIMATE_FAN_OFF,
-      climate::ClimateFanMode::CLIMATE_FAN_AUTO,
-      climate::ClimateFanMode::CLIMATE_FAN_AUTO,
-      nullopt,
-      nullopt,
-      nullopt,
-      nullopt,
-      nullopt,
-      nullopt,
-      nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_LOW,  //"1",
-      nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_FOCUS,  //"2",
-      nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_MEDIUM,  //"3",
-      nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_MIDDLE,  //"4",
-      nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_HIGH,  //"5"
-  };
-
   if ((payload[16] & 0b00001000) != 0) {
     this->mode = decode_climateMode(payload[16] >> 4);
   } else {
@@ -441,12 +472,11 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
   this->target_temperature = payload[17];
   this->current_temperature = payload[18] <= 128 ? (float) payload[18] : NAN;
 
-  // Fan speed
-  {
-    if (payload[14] < sizeof(decode_wind_codes) / sizeof(decode_wind_codes[0])) {
-      auto wind = decode_wind_codes[payload[14]];
-      this->fan_mode = wind;
-    }
+  // payload[14] = fan code << 1. Some units report auto as 0x01. 0 while off: keep last.
+  if (payload[14] == 0x01) {
+    this->publish_fan_code_(1);
+  } else if (payload[14] != 0) {
+    this->publish_fan_code_(payload[14] >> 1);
   }
 
   {

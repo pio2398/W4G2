@@ -123,7 +123,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 
   struct HvacSettings {
     esphome::optional<esphome::climate::ClimateMode> mode;
-    esphome::optional<esphome::climate::ClimateFanMode> fan_mode;
+    esphome::optional<uint8_t> fan_code;  // unit's fan speed code, see fan_code_from_call_()
     esphome::optional<esphome::climate::ClimateSwingMode> swing_mode;
     esphome::optional<float> target_temperature;
     esphome::optional<esphome::climate::ClimatePreset> preset;
@@ -177,26 +177,17 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
     }
   }
 
-  int encode_fan_mode(const climate::ClimateFanMode mode) {
-    switch (mode) {
-      case climate::CLIMATE_FAN_OFF:
-        return 0;
-      case climate::CLIMATE_FAN_AUTO:
-        return 1;
-      case climate::CLIMATE_FAN_LOW:
-        return 10;
-      case climate::CLIMATE_FAN_FOCUS:
-        return 12;  // matches your traits() list
-      case climate::CLIMATE_FAN_MEDIUM:
-        return 14;
-      case climate::CLIMATE_FAN_MIDDLE:
-        return 16;
-      case climate::CLIMATE_FAN_HIGH:
-        return 18;
-      default:
-        return 1;  // fall back to auto
-    }
-  }
+  // Fan speed uses the unit's own code: status byte payload[14] == code << 1,
+  // control byte == (code << 1) | 1. Names follow the remote/manual
+  // (Auto, Lower, Low, Medium, High, Higher), with ESPHome's standard
+  // LOW/MEDIUM/HIGH where they exist and custom modes for the two extremes:
+  //   code 1 AUTO | 5-speed: 5 "Lower", 6 LOW, 7 MEDIUM, 8 HIGH, 9 "Higher"
+  //               | 3-speed: 2 LOW, 3 MEDIUM, 4 HIGH
+  static constexpr const char *FAN_LOWER = "Lower";
+  static constexpr const char *FAN_HIGHER = "Higher";
+  optional<uint8_t> fan_code_from_call_(const climate::ClimateCall &call);
+  void publish_fan_code_(uint8_t code);
+  void update_custom_fan_modes_();
 };
 
 }  // namespace ac
