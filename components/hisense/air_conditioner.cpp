@@ -498,19 +498,23 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
   this->decode_features_(payload);
 
 #ifdef USE_SENSOR
-  {
-    update_sub_sensor_(SubSensorType::INDOOR_TEMPERATURE, static_cast<float>(payload[18]));
-    update_sub_sensor_(SubSensorType::INDOOR_COIL_TEMPERATURE, static_cast<float>(payload[19]));
-
-    update_sub_sensor_(SubSensorType::INDOOR_HUMIDITY, static_cast<float>(payload[21]));
-    if (payload.size() > 41) {
-      update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE, static_cast<float>(payload[40]));
-      update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, static_cast<float>(payload[41]));
-    }
-
-    //  update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE,
-    //  static_cast<float>(payload[41])); //OutDoor coil?
-  }
+  auto byte_or_nan = [&payload](size_t idx) -> float {
+    if (idx >= payload.size())
+      return NAN;
+    return payload[idx] == 0x80 ? NAN : (float) payload[idx];  // 0x80 = not supported
+  };
+  update_sub_sensor_(SubSensorType::INDOOR_TEMPERATURE, byte_or_nan(18));
+  update_sub_sensor_(SubSensorType::INDOOR_COIL_TEMPERATURE, byte_or_nan(19));
+  update_sub_sensor_(SubSensorType::INDOOR_HUMIDITY, byte_or_nan(21));
+  // Outdoor unit (verified live; the bytes 40/41 used previously are compressor
+  // frequencies). Outdoor temperatures are signed.
+  auto signed_or_nan = [&payload](size_t idx) -> float {
+    if (idx >= payload.size() || payload[idx] == 0x80)
+      return NAN;
+    return (float) (int8_t) payload[idx];
+  };
+  update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE, signed_or_nan(42));
+  update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, signed_or_nan(43));
 #endif
 }
 
@@ -554,15 +558,14 @@ void AirConditioner::set_sub_sensor(SubSensorType type, sensor::Sensor *sens) {
   } else {
     ESP_LOGE(TAG, "Not valid sensor index: %d", index);
   }
-};
+}
+
 void AirConditioner::update_sub_sensor_(SubSensorType type, float value) {
   std::size_t index = static_cast<std::size_t>(type);
   if (index < sub_sensors_.size() && sub_sensors_[index] != nullptr) {
     sub_sensors_[index]->publish_state(value);
-  } else {
-    ESP_LOGE(TAG, "Not valid sensor index: %d", index);
   }
-};
+}
 #endif
 
 void AirConditioner::change_status(Status new_status) {
