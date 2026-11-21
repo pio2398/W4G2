@@ -119,7 +119,15 @@ switch:
       name: Quiet
     sleep:
       name: Sleep
+    beep:                 # optional; default on, restored across reboots
+      name: Beep
 ```
+
+`beep` is a local setting, not a unit state: it sets byte 23 bit 2 of the commands sent from
+ESPHome, which asks the unit to beep when it accepts the command (the stock module always sets
+it). Turning it off sends that byte as `00`: verified on a unit, the command still applies
+and the unit stays silent. The unit does not report it, so it is restored from
+flash at boot (`restore_mode`, default `RESTORE_DEFAULT_ON`).
 
 ## LibreTiny (RTL8710BN) UART issues: handled by the component
 

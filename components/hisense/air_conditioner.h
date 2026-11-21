@@ -44,7 +44,9 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   uint8_t waiting_for_response{0};
 
   // Toggleable features exposed as switches.
-  enum class Feature : uint8_t { FEATURE_DISPLAY = 0, FEATURE_ECO, FEATURE_TURBO, FEATURE_QUIET, FEATURE_SLEEP, FEATURE_COUNT };
+  enum class Feature : uint8_t { FEATURE_DISPLAY = 0, FEATURE_ECO, FEATURE_TURBO, FEATURE_QUIET, FEATURE_SLEEP,
+                              FEATURE_BEEP,  // local setting: beep flag (T23 bit 2) on our commands
+                              FEATURE_COUNT };
   void set_feature(Feature feature, bool state);
   void set_display_switch(bool state) { this->set_feature(Feature::FEATURE_DISPLAY, state); }
 
@@ -105,6 +107,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   uint32_t last_status_change{0};
 
   bool display_enable{true};  // Status of display screen of AC unit.
+  bool beep_enable_{true};    // Ask the unit to beep when it accepts a command (T23 bit 2)
   uint8_t settling_features_{0};  // Feature bits changed by the last command, not yet confirmed by a poll
 
   uint16_t checksum(const std::vector<uint8_t> &payload);

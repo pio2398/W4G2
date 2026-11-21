@@ -1,6 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import switch
+from esphome.const import ENTITY_CATEGORY_CONFIG
 
 from ..climate import CONF_HISENSE_ID, hisense_ac_ns, AirConditioner
 
@@ -18,6 +19,8 @@ SWITCH_TYPES = {
     "turbo": ("FEATURE_TURBO", "mdi:rocket-launch"),
     "quiet": ("FEATURE_QUIET", "mdi:volume-off"),
     "sleep": ("FEATURE_SLEEP", "mdi:power-sleep"),
+    # Not reported by the unit: sets the beep flag on commands sent from ESPHome.
+    "beep": ("FEATURE_BEEP", "mdi:volume-high"),
 }
 
 CONFIG_SCHEMA = cv.Schema(
@@ -26,7 +29,12 @@ CONFIG_SCHEMA = cv.Schema(
     }
 ).extend(
     {
-        cv.Optional(key): switch.switch_schema(AirConditionSwitch, icon=icon)
+        cv.Optional(key): switch.switch_schema(
+            AirConditionSwitch,
+            icon=icon,
+            entity_category=ENTITY_CATEGORY_CONFIG if key == "beep" else cv.UNDEFINED,
+            default_restore_mode="RESTORE_DEFAULT_ON" if key == "beep" else cv.UNDEFINED,
+        )
         for key, (_, icon) in SWITCH_TYPES.items()
     }
 )

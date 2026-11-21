@@ -18,6 +18,9 @@ class AirConditionSwitch : public Component, public switch_::Switch {
     // take their state from the unit's status replies.
     if (this->feature_ == AirConditioner::Feature::FEATURE_DISPLAY)
       this->write_state(true);
+    // Beep is a local setting the unit never reports: restore it (default on).
+    if (this->feature_ == AirConditioner::Feature::FEATURE_BEEP)
+      this->write_state(this->get_initial_state_with_restore_mode().value_or(true));
   }
 
   void write_state(bool state) override {

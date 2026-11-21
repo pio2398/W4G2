@@ -319,7 +319,8 @@ void AirConditioner::send_status() {
   std::vector<uint8_t> status(46, 0x00);
   const uint8_t header[] = {0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x65};
   std::copy(std::begin(header), std::end(header), status.begin());
-  status[23] = 0x04;
+  // Byte 23 bit 2: the unit beeps when it accepts the frame (stock module always sets it).
+  status[23] = this->beep_enable_ ? 0x04 : 0x00;
 
   if (next_hvac_settings.mode != nullopt) {
     if (next_hvac_settings.mode.value() == climate::CLIMATE_MODE_OFF) {
@@ -417,6 +418,11 @@ void AirConditioner::control(const climate::ClimateCall &call) {
 }
 
 void AirConditioner::set_feature(Feature feature, bool state) {
+  if (feature == Feature::FEATURE_BEEP) {
+    // Not a unit setting: only changes how our own commands are sent.
+    this->beep_enable_ = state;
+    return;
+  }
   auto &next = this->pending_settings_();
   switch (feature) {
     case Feature::FEATURE_DISPLAY:
