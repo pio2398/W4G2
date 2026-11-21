@@ -105,6 +105,22 @@ switch:
       name: Hisens Display Enable
 
 ```
+## Additional options and entities
+
+```yaml
+switch:
+  - platform: hisense
+    hisense_id: hisense_ac
+    eco:
+      name: Eco
+    turbo:
+      name: Turbo
+    quiet:
+      name: Quiet
+    sleep:
+      name: Sleep
+```
+
 ## LibreTiny (RTL8710BN) UART issues: handled by the component
 
 On RTL8710B the component works around two LibreTiny bugs itself. No YAML lambdas are needed:

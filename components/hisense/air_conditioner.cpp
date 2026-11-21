@@ -380,6 +380,23 @@ void AirConditioner::send_status() {
   auto settling = [this](Feature f) { this->settling_features_ |= 1u << static_cast<uint8_t>(f); };
   if (next_hvac_settings.display.has_value())
     settling(Feature::FEATURE_DISPLAY);
+  if (next_hvac_settings.sleep.has_value())
+    settling(Feature::FEATURE_SLEEP);
+  if (next_hvac_settings.turbo.has_value())
+    settling(Feature::FEATURE_TURBO);
+  if (next_hvac_settings.eco.has_value())
+    settling(Feature::FEATURE_ECO);
+  if (next_hvac_settings.quiet.has_value())
+    settling(Feature::FEATURE_QUIET);
+
+  if (next_hvac_settings.sleep.has_value())
+    status[17] = (uint8_t) (((*next_hvac_settings.sleep ? 1 : 0) << 1) | 1);
+  if (next_hvac_settings.turbo.has_value())
+    status[33] |= (uint8_t) (((*next_hvac_settings.turbo ? 1 : 0) << 3) | 0x04);
+  if (next_hvac_settings.eco.has_value())
+    status[33] |= (uint8_t) (((*next_hvac_settings.eco ? 1 : 0) << 5) | 0x10);
+  if (next_hvac_settings.quiet.has_value())
+    status[35] |= (uint8_t) (((*next_hvac_settings.quiet ? 1 : 0) << 5) | 0x10);
 
   send_raw(status);
   ESP_LOGD(TAG, "send_status");
@@ -405,6 +422,18 @@ void AirConditioner::set_feature(Feature feature, bool state) {
     case Feature::FEATURE_DISPLAY:
       next.display = state;
       this->display_enable = state;
+      break;
+    case Feature::FEATURE_ECO:
+      next.eco = state;
+      break;
+    case Feature::FEATURE_TURBO:
+      next.turbo = state;
+      break;
+    case Feature::FEATURE_QUIET:
+      next.quiet = state;
+      break;
+    case Feature::FEATURE_SLEEP:
+      next.sleep = state;
       break;
     default:
       break;
@@ -526,6 +555,16 @@ void AirConditioner::decode_features_(const std::vector<uint8_t> &payload) {
   auto settled = [this, command_reply](Feature f) {
     return !command_reply || !(this->settling_features_ & (1u << static_cast<uint8_t>(f)));
   };
+#ifdef USE_SWITCH
+  if (settled(Feature::FEATURE_SLEEP))
+    this->publish_feature_(Feature::FEATURE_SLEEP, (payload[15] >> 1) != 0);
+  if (settled(Feature::FEATURE_TURBO))
+    this->publish_feature_(Feature::FEATURE_TURBO, (payload[33] & 0b00000010) != 0);
+  if (settled(Feature::FEATURE_ECO))
+    this->publish_feature_(Feature::FEATURE_ECO, (payload[33] & 0b00000100) != 0);
+  if (payload.size() > 34 && settled(Feature::FEATURE_QUIET))
+    this->publish_feature_(Feature::FEATURE_QUIET, (payload[34] & 0b00000100) != 0);
+#endif
   if (payload.size() > 35 && !this->next_hvac_settings_.has_value() && settled(Feature::FEATURE_DISPLAY)) {
     // Display on/off is reported in bit 7 of byte 35 (verified live).
     this->display_enable = (payload[35] & 0x80) != 0;

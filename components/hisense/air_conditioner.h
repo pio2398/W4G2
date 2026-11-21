@@ -44,7 +44,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   uint8_t waiting_for_response{0};
 
   // Toggleable features exposed as switches.
-  enum class Feature : uint8_t { FEATURE_DISPLAY = 0, FEATURE_COUNT };
+  enum class Feature : uint8_t { FEATURE_DISPLAY = 0, FEATURE_ECO, FEATURE_TURBO, FEATURE_QUIET, FEATURE_SLEEP, FEATURE_COUNT };
   void set_feature(Feature feature, bool state);
   void set_display_switch(bool state) { this->set_feature(Feature::FEATURE_DISPLAY, state); }
 
@@ -128,6 +128,10 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
     esphome::optional<float> target_temperature;
     esphome::optional<esphome::climate::ClimatePreset> preset;
     esphome::optional<bool> display;
+    esphome::optional<bool> eco;
+    esphome::optional<bool> turbo;
+    esphome::optional<bool> quiet;
+    esphome::optional<bool> sleep;
 
     HvacSettings(){};
     HvacSettings(const HvacSettings &) = default;

@@ -14,6 +14,10 @@ Feature = AirConditioner.enum("Feature", True)
 # config key -> (Feature enum member, icon)
 SWITCH_TYPES = {
     "hisens_display": ("FEATURE_DISPLAY", "mdi:monitor"),
+    "eco": ("FEATURE_ECO", "mdi:leaf"),
+    "turbo": ("FEATURE_TURBO", "mdi:rocket-launch"),
+    "quiet": ("FEATURE_QUIET", "mdi:volume-off"),
+    "sleep": ("FEATURE_SLEEP", "mdi:power-sleep"),
 }
 
 CONFIG_SCHEMA = cv.Schema(
