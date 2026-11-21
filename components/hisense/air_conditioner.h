@@ -76,7 +76,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 
   void control(const climate::ClimateCall &call) override;
 
-  /// Read one byte from the UART.
+  /// Read one byte from the UART (race-free on RTL8710B, see .cpp).
   bool read_rx_byte_(uint8_t *byte);
   /// Feed one received (still stuffed) byte into the frame decoder.
   ParseStatus feed_byte_(uint8_t byte);

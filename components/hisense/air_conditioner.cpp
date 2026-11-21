@@ -1,10 +1,33 @@
 #include "air_conditioner.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+
+#ifdef USE_LIBRETINY_VARIANT_RTL8710B
+#include "esphome/components/uart/uart_component_libretiny.h"
+#include <ArduinoPrivate.h>
+#endif
+
 namespace esphome {
 namespace hisense {
 namespace ac {
 static const char *const TAG = "climate.air_conditioner";
+
+#ifdef USE_LIBRETINY_VARIANT_RTL8710B
+// Workarounds for LibreTiny on RTL8710B (AmebaZ), the AEH-W4G2's chip:
+//  * LibreTiny >= 1.12 calls UART_Init() after enabling RX, which clears the RX
+//    interrupt, so the port never receives (libretiny-eu/libretiny#366).
+//  * The Arduino RingBuffer updates its element count from both the RX interrupt
+//    (++) and read() (--) without locking. An interrupt landing inside read()
+//    loses an increment, after which the last bytes of every frame stay
+//    unreadable until more data arrives (libretiny-eu/libretiny#419). Masking
+//    the UART RX interrupt around reads avoids it; the 16-byte hardware FIFO
+//    holds incoming bytes meanwhile.
+static UART_TypeDef *ambz_uart(uart::UARTComponent *parent) {
+  auto *lt = static_cast<uart::LibreTinyUARTComponent *>(parent);
+  const int8_t idx = lt->get_hw_serial_number();
+  return (idx >= 0 && idx <= 2) ? UART_DEV_TABLE[idx].UARTx : nullptr;
+}
+#endif
 
 static const uint8_t FRAME_ESC = 0xF4;
 static const uint8_t FRAME_START = 0xF5;
@@ -17,8 +40,27 @@ void AirConditioner::setup() {
   }
   this->last_status_change = millis();
   this->status = Status::standby;
+#ifdef USE_LIBRETINY_VARIANT_RTL8710B
+  if (auto *u = ambz_uart(this->parent_)) {
+    UART_RxCmd(u, ENABLE);
+    UART_INTConfig(u, RUART_IER_ERBI, ENABLE);
+  }
+#endif
 }
-bool AirConditioner::read_rx_byte_(uint8_t *byte) { return this->available() && this->read_byte(byte); }
+
+bool AirConditioner::read_rx_byte_(uint8_t *byte) {
+#ifdef USE_LIBRETINY_VARIANT_RTL8710B
+  UART_TypeDef *u = ambz_uart(this->parent_);
+  if (u != nullptr)
+    UART_INTConfig(u, RUART_IER_ERBI, DISABLE);
+  const bool ok = this->available() && this->read_byte(byte);
+  if (u != nullptr)
+    UART_INTConfig(u, RUART_IER_ERBI, ENABLE);
+  return ok;
+#else
+  return this->available() && this->read_byte(byte);
+#endif
+}
 
 void AirConditioner::loop() {
   if (millis() - this->last_extra_log_print > 3000) {
