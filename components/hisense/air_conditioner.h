@@ -4,6 +4,7 @@
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/component.h"
 
+#include <string>
 #include <vector>
 
 #ifdef USE_SENSOR
@@ -11,6 +12,9 @@
 #endif
 #ifdef USE_SWITCH
 #include "esphome/components/switch/switch.h"
+#endif
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
 #endif
 
 namespace esphome {
@@ -56,6 +60,10 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   }
 #endif
 
+#ifdef USE_TEXT_SENSOR
+  void set_faults_text_sensor(text_sensor::TextSensor *s) { this->faults_text_sensor_ = s; }
+#endif
+
 #ifdef USE_SENSOR
   enum class SubSensorType {
     // Used data based sensors
@@ -97,6 +105,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   ParseStatus check_frame_();
   void decode_message(const std::vector<uint8_t> &payload);
   void decode_features_(const std::vector<uint8_t> &payload);
+  void decode_faults_(const std::vector<uint8_t> &payload);
 
   void send_status();
 
@@ -118,6 +127,10 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 #ifdef USE_SWITCH
   switch_::Switch *feature_switches_[static_cast<size_t>(Feature::FEATURE_COUNT)]{};
   void publish_feature_(Feature feature, bool state);
+#endif
+
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *faults_text_sensor_{nullptr};
 #endif
 
 #ifdef USE_SENSOR

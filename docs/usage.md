@@ -118,6 +118,12 @@ sensor:
     compressor_frequency: # compressor output frequency in Hz (0 when stopped)
       name: Compressor Frequency
 
+text_sensor:
+  - platform: hisense
+    hisense_id: hisense_ac
+    faults:               # "OK" or a list of active fault flags
+      name: Faults
+
 switch:
   - platform: hisense
     hisense_id: hisense_ac

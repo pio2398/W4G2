@@ -531,6 +531,7 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
   this->publish_state();
 
   this->decode_features_(payload);
+  this->decode_faults_(payload);
 
 #ifdef USE_SENSOR
   auto byte_or_nan = [&payload](size_t idx) -> float {
@@ -593,6 +594,50 @@ void AirConditioner::decode_features_(const std::vector<uint8_t> &payload) {
   }
   if (!command_reply)
     this->settling_features_ = 0;
+}
+
+void AirConditioner::decode_faults_(const std::vector<uint8_t> &payload) {
+#ifdef USE_TEXT_SENSOR
+  if (this->faults_text_sensor_ == nullptr)
+    return;
+  struct FaultBit {
+    uint8_t index;
+    uint8_t mask;
+    const char *name;
+  };
+  static const FaultBit FAULTS[] = {
+      {37, 0x80, "indoor temp sensor"},
+      {37, 0x40, "indoor coil sensor"},
+      {37, 0x20, "humidity sensor"},
+      {37, 0x10, "water full"},
+      {37, 0x08, "indoor fan motor"},
+      {37, 0x04, "grille protection"},
+      {37, 0x02, "zero-cross detection"},
+      {37, 0x01, "indoor/outdoor comms"},
+      {38, 0x80, "display board"},
+      {38, 0x40, "keypad"},
+      {38, 0x20, "wifi module"},
+      {38, 0x10, "electrical"},
+      {38, 0x08, "indoor EEPROM"},
+      {62, 0x40, "outdoor EEPROM"},
+      {62, 0x20, "outdoor coil sensor"},
+      {62, 0x10, "discharge temp sensor"},
+      {62, 0x08, "outdoor temp sensor"},
+      {64, 0x10, "over-heat/over-cold protection"},
+  };
+  std::string faults;
+  for (const auto &f : FAULTS) {
+    if (f.index < payload.size() && (payload[f.index] & f.mask)) {
+      if (!faults.empty())
+        faults += ", ";
+      faults += f.name;
+    }
+  }
+  if (faults.empty())
+    faults = "OK";
+  if (!this->faults_text_sensor_->has_state() || this->faults_text_sensor_->get_state() != faults)
+    this->faults_text_sensor_->publish_state(faults);
+#endif
 }
 
 #ifdef USE_SWITCH
