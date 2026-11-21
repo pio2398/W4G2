@@ -315,6 +315,34 @@ void AirConditioner::identity_done_() {
 #endif
 }
 
+climate::ClimateAction AirConditioner::decode_action_(const std::vector<uint8_t> &payload) {
+  if (this->mode == climate::CLIMATE_MODE_OFF)
+    return climate::CLIMATE_ACTION_OFF;
+  // payload[14] == 0: indoor fan stopped (pre-heat after switching to heat,
+  // mode transitions). payload[39]/[41]: compressor target / ramping output
+  // frequency, both 0 when the compressor is stopped (verified live).
+  const bool fan_running = payload[14] != 0;
+  const bool compressor = payload.size() > 41 && (payload[39] != 0 || payload[41] != 0);
+  if (compressor) {
+    switch (this->mode) {
+      case climate::CLIMATE_MODE_COOL:
+        return climate::CLIMATE_ACTION_COOLING;
+      case climate::CLIMATE_MODE_HEAT:
+        return climate::CLIMATE_ACTION_HEATING;
+      case climate::CLIMATE_MODE_DRY:
+        return climate::CLIMATE_ACTION_DRYING;
+      case climate::CLIMATE_MODE_AUTO:
+        // Auto picks cooling or heating itself: tell from the indoor coil.
+        if (payload[19] != 0x80 && payload[18] != 0x80)
+          return payload[19] > payload[18] ? climate::CLIMATE_ACTION_HEATING : climate::CLIMATE_ACTION_COOLING;
+        break;
+      default:
+        break;
+    }
+  }
+  return fan_running ? climate::CLIMATE_ACTION_FAN : climate::CLIMATE_ACTION_IDLE;
+}
+
 void AirConditioner::update_custom_fan_modes_() {
   if (this->three_speed_fan_()) {
     this->set_supported_custom_fan_modes(std::vector<const char *>{});
@@ -397,7 +425,7 @@ climate::ClimateTraits AirConditioner::traits() {
   traits.set_supported_swing_modes({climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
                                     climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
 
-  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
+  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE | climate::CLIMATE_SUPPORTS_ACTION);
   traits.set_visual_min_temperature(16.0f);
   traits.set_visual_max_temperature(32.0f);
   traits.set_visual_target_temperature_step(1.0f);
@@ -646,6 +674,7 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
 
   this->target_temperature = payload[17];
   this->current_temperature = payload[18] <= 128 ? (float) payload[18] : NAN;
+  this->action = this->decode_action_(payload);
 
   // payload[14] = fan code << 1. Some units report auto as 0x01. 0 while off: keep last.
   if (payload[14] == 0x01) {

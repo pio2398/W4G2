@@ -145,6 +145,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   ParseStatus check_frame_();
   void decode_message(const std::vector<uint8_t> &payload);
   void decode_features_(const std::vector<uint8_t> &payload);
+  climate::ClimateAction decode_action_(const std::vector<uint8_t> &payload);
   void decode_faults_(const std::vector<uint8_t> &payload);
 
   void send_status();
