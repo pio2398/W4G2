@@ -89,6 +89,8 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 #ifdef USE_SELECT
   void set_sleep_profile_select(select::Select *s) { this->sleep_profile_select_ = s; }
 #endif
+  /// 0 = detect from the unit (default), otherwise force 3 or 5 fan speeds.
+  void set_fan_speeds(uint8_t speeds) { this->fan_speeds_config_ = speeds; }
   const HisenseCapabilities &get_capabilities() const { return this->caps_; }
 
   // On/off timers (control bytes 27/28 and 29/30, status bytes 28/29 and 30/31).
@@ -155,6 +157,11 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   bool handle_identity_reply_(const std::vector<uint8_t> &payload);
   void identity_done_();
   HisenseCapabilities caps_;
+  uint8_t fan_speeds_config_{0};
+  bool three_speed_fan_() const {
+    return this->fan_speeds_config_ ? this->fan_speeds_config_ == 3 : this->caps_.three_speed_fan();
+  }
+  bool legacy_power_wide_{false};  // stock firmware's sticky flag for the old power format
 
   std::vector<uint8_t> rx_buffer_;  // unstuffed frame being received
   bool rx_in_frame_{false};

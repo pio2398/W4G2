@@ -127,7 +127,7 @@ SENSOR_TYPES = {
         state_class=STATE_CLASS_MEASUREMENT,
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
     ),
-    # Stock firmware "f_electricity" (status bytes 142-143).
+    # Stock firmware "f_electricity" (status bytes 142-143, or 53-55 on older units).
     # Raw value: the unit is not known (1000-1800 while cooling, ~400 fan only).
     # Set unit_of_measurement / device_class in YAML once checked against a meter.
     CONF_POWER: sensor.sensor_schema(

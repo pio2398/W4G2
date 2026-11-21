@@ -108,6 +108,12 @@ switch:
 ## Additional options and entities
 
 ```yaml
+climate:
+  - platform: hisense
+    # ...
+    # Optional. "auto" (default) detects the fan type from the unit, "3" or "5" forces it.
+    fan_speeds: auto
+
 sensor:
   - platform: hisense
     hisense_id: hisense_ac
@@ -192,7 +198,13 @@ flash at boot (`restore_mode`, default `RESTORE_DEFAULT_ON`).
 At start-up the component asks the indoor unit for its version (`07 01`), device type
 (`0A 04`) and capability bits (`66 40`), the same read-only queries the stock WiFi module
 sends. The capability bits are turned into the stock firmware's "product type" with a table
-ported from that firmware (`capabilities.h`).
+ported from that firmware (`capabilities.h`). These values select:
+
+* 3-speed (values 2/3/4) or 5-speed (values 5..9) fan encoding. 3-speed is used for split
+  units with protocol <= 532 or product types 102/103/106/107.
+* The power format: status bytes 142-143 for protocol >= 534, or bytes 53-55 for older units.
+  Bytes 142-143 are little-endian (142 is the low byte): on the units seen so far they repeat
+  bytes 53-54 (big-endian) byte-swapped, e.g. 53:54 = `06 40` and 142:143 = `40 06` = 1600.
 
 The result is logged at boot and in `dump_config`. You can also see it with the `identity`
 text sensor. If your unit reports something unexpected, please include that line in issues.

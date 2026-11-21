@@ -21,6 +21,8 @@ AirConditioner = hisense_ac_ns.class_(
     "AirConditioner", uart.UARTDevice, cg.Component, climate.Climate
 )
 CONF_HISENSE_ID = "hisense_id"
+CONF_FAN_SPEEDS = "fan_speeds"
+FAN_SPEEDS = {"auto": 0, "3": 3, "5": 5}
 
 
 # ESPHome API migration:
@@ -47,6 +49,11 @@ CONFIG_SCHEMA = cv.All(
     _BASE_CLIMATE_SCHEMA.extend(
         {
             cv.Optional(CONF_FLOW_CONTROL_PIN): pins.gpio_output_pin_schema,
+            # "auto" detects 3- or 5-speed fans from the unit's protocol version
+            # and capability bits, as the stock WiFi module does.
+            cv.Optional(CONF_FAN_SPEEDS, default="auto"): cv.All(
+                cv.string, cv.one_of(*FAN_SPEEDS, lower=True)
+            ),
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -69,3 +76,5 @@ async def to_code(config):
     if CONF_FLOW_CONTROL_PIN in config:
         pin = await gpio_pin_expression(config[CONF_FLOW_CONTROL_PIN])
         cg.add(var.set_flow_control_pin(pin))
+
+    cg.add(var.set_fan_speeds(FAN_SPEEDS[config[CONF_FAN_SPEEDS]]))
