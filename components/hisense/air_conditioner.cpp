@@ -399,6 +399,31 @@ void AirConditioner::send_status() {
   if (next_hvac_settings.quiet.has_value())
     status[35] |= (uint8_t) (((*next_hvac_settings.quiet ? 1 : 0) << 5) | 0x10);
 
+  // On timer in bytes 27/28, off timer in 29/30 (straga xm_KTKT / xm_KTGT):
+  //   first byte:  hours << 3 | 0x04 (hours valid) | on << 1 | 0x01 (on valid)
+  //   second byte: minutes << 2 | 0x01 (minutes valid)
+  // The stock app sends a clock time together with the unit clock (bytes 25/26).
+  // The unit reports the time remaining, so the clock is sent as 00:00 and the
+  // timer as the delay: that works whether the unit takes it as a delay or a time.
+  bool timer_sent = false;
+  for (int i = 0; i < 2; i++) {
+    if (!next_hvac_settings.timer[i].has_value())
+      continue;
+    const uint16_t minutes = *next_hvac_settings.timer[i];
+    const size_t b = i == 0 ? 27 : 29;
+    if (minutes == 0) {
+      status[b] = 0x01;  // timer off
+    } else {
+      status[b] = (uint8_t) (((minutes / 60) << 3) | 0x04 | 0x02 | 0x01);
+      status[b + 1] = (uint8_t) (((minutes % 60) << 2) | 0x01);
+      timer_sent = true;
+    }
+  }
+  if (timer_sent) {
+    status[25] = 0x01;  // clock hours = 0, valid
+    status[26] = 0x01;  // clock minutes = 0, valid
+  }
+
   send_raw(status);
   ESP_LOGD(TAG, "send_status");
 }
@@ -444,6 +469,12 @@ void AirConditioner::set_feature(Feature feature, bool state) {
     default:
       break;
   }
+}
+
+void AirConditioner::set_timer(bool off, uint16_t minutes) {
+  if (minutes > TIMER_MAX_MINUTES)
+    minutes = TIMER_MAX_MINUTES;
+  this->pending_settings_().timer[off ? 1 : 0] = minutes;
 }
 
 void AirConditioner::set_sleep_profile(uint8_t profile, bool send) {
@@ -547,6 +578,24 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
 
   this->decode_features_(payload);
   this->decode_faults_(payload);
+#ifdef USE_NUMBER
+  // On/off timers, as time remaining (also when set with the remote): bytes 28/29
+  // (on) and 30/31 (off). First byte bit 1 = set, bits 7-3 = hours; second byte
+  // bits 7-2 = minutes. The unit counts them down once a minute and acts when they
+  // reach zero. Published in minutes, 0 = not set. The reply to a timer command
+  // can still show the old timers, so only polls are used.
+  if (payload[11] == 0x66 && !(this->next_hvac_settings_.has_value() &&
+                               (this->next_hvac_settings_->timer[0].has_value() ||
+                                this->next_hvac_settings_->timer[1].has_value()))) {
+    for (int i = 0; i < 2; i++) {
+      const size_t b = i == 0 ? 28 : 30;
+      const float v = (payload[b] & 0x02) ? (float) ((payload[b] >> 3) * 60 + (payload[b + 1] >> 2)) : 0.0f;
+      auto *n = this->timer_numbers_[i];
+      if (n != nullptr && (!n->has_state() || n->state != v))
+        n->publish_state(v);
+    }
+  }
+#endif
 
 #ifdef USE_SENSOR
   auto byte_or_nan = [&payload](size_t idx) -> float {

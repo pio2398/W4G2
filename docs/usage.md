@@ -140,6 +140,14 @@ switch:
     beep:                 # optional; default on, restored across reboots
       name: Beep
 
+number:
+  - platform: hisense
+    hisense_id: hisense_ac
+    timer_on:             # minutes until the unit turns on; 0 cancels. Shows remote timers too
+      name: Timer On
+    timer_off:            # minutes until the unit turns off; 0 cancels
+      name: Timer Off
+
 select:
   - platform: hisense
     hisense_id: hisense_ac
@@ -152,6 +160,10 @@ select:
 sleep is on switches the unit to the new profile. While sleep is on, the select shows the
 profile the unit reports, so a profile chosen with the remote shows up too. The last choice is
 restored at boot.
+
+`timer_on` / `timer_off` set the unit's own on and off timers, in minutes from now (up to
+23 h 59 min). Setting 0 cancels the timer. They show the time left, including for timers set
+with the remote. The unit counts down once a minute, so a timer can fire up to a minute early.
 
 `beep` is a local setting, not a unit state: it sets byte 23 bit 2 of the commands sent from
 ESPHome, which asks the unit to beep when it accepts the command (the stock module always sets

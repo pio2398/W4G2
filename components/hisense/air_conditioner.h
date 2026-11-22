@@ -19,6 +19,9 @@
 #ifdef USE_SELECT
 #include "esphome/components/select/select.h"
 #endif
+#ifdef USE_NUMBER
+#include "esphome/components/number/number.h"
+#endif
 
 namespace esphome {
 namespace hisense {
@@ -76,6 +79,14 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
   void set_sleep_profile(uint8_t profile, bool send);
 #ifdef USE_SELECT
   void set_sleep_profile_select(select::Select *s) { this->sleep_profile_select_ = s; }
+#endif
+
+  // On/off timers (control bytes 27/28 and 29/30, status bytes 28/29 and 30/31).
+  static const uint16_t TIMER_MAX_MINUTES = 24 * 60 - 1;
+  /// Set the on (off = false) or off timer to run out in `minutes`; 0 cancels it.
+  void set_timer(bool off, uint16_t minutes);
+#ifdef USE_NUMBER
+  void set_timer_number(bool off, number::Number *n) { this->timer_numbers_[off ? 1 : 0] = n; }
 #endif
 
 #ifdef USE_SENSOR
@@ -152,6 +163,9 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 #ifdef USE_SELECT
   select::Select *sleep_profile_select_{nullptr};
 #endif
+#ifdef USE_NUMBER
+  number::Number *timer_numbers_[2]{};  // on, off
+#endif
 
 #ifdef USE_SENSOR
   static constexpr std::size_t SubSensorTypeCount = static_cast<std::size_t>(SubSensorType::SUB_SENSOR_TYPE_COUNT);
@@ -170,6 +184,7 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
     esphome::optional<bool> turbo;
     esphome::optional<bool> quiet;
     esphome::optional<uint8_t> sleep;  // sleep profile, 0 = off
+    esphome::optional<uint16_t> timer[2];  // on, off: minutes from now, 0 = cancel
 
     HvacSettings(){};
     HvacSettings(const HvacSettings &) = default;
