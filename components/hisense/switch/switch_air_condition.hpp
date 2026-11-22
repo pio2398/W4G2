@@ -12,10 +12,11 @@ namespace ac {
 static const char *const TAG = "climate.air_conditioner";
 
 class AirConditionSwitch : public Component, public switch_::Switch {
-public:
-  AirConditionSwitch(){};
+ public:
+  AirConditionSwitch() {};
   void setup() override {
-    // Force the display on by default at every boot. remove this function if you dont want the display to be ON by default
+    // Force the display on by default at every boot. remove this function if you dont want the display to be ON by
+    // default
     this->write_state(true);
   }
 
@@ -26,9 +27,9 @@ public:
   };
   void set_parent(AirConditioner *parent) { this->parent_ = parent; }
 
-protected:
+ protected:
   AirConditioner *parent_;
 };
-} // namespace ac
-} // namespace hisense
-} // namespace esphome
+}  // namespace ac
+}  // namespace hisense
+}  // namespace esphome

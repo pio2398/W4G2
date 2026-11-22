@@ -1,100 +1,224 @@
 #include "air_conditioner.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+
+#ifdef USE_LIBRETINY_VARIANT_RTL8710B
+#include "esphome/components/uart/uart_component_libretiny.h"
+#include <ArduinoPrivate.h>
+#endif
+
 namespace esphome {
 namespace hisense {
 namespace ac {
 static const char *const TAG = "climate.air_conditioner";
 
+#ifdef USE_LIBRETINY_VARIANT_RTL8710B
+// Workarounds for LibreTiny on RTL8710B (AmebaZ), the AEH-W4G2's chip:
+//  * LibreTiny >= 1.12 calls UART_Init() after enabling RX, which clears the RX
+//    interrupt, so the port never receives (libretiny-eu/libretiny#366).
+//  * The Arduino RingBuffer updates its element count from both the RX interrupt
+//    (++) and read() (--) without locking. An interrupt landing inside read()
+//    loses an increment, after which the last bytes of every frame stay
+//    unreadable until more data arrives (libretiny-eu/libretiny#419). Masking
+//    the UART RX interrupt around reads avoids it; the 16-byte hardware FIFO
+//    holds incoming bytes meanwhile.
+static UART_TypeDef *ambz_uart(uart::UARTComponent *parent) {
+  auto *lt = static_cast<uart::LibreTinyUARTComponent *>(parent);
+  const int8_t idx = lt->get_hw_serial_number();
+  return (idx >= 0 && idx <= 2) ? UART_DEV_TABLE[idx].UARTx : nullptr;
+}
+#endif
+
+static const uint8_t FRAME_ESC = 0xF4;
+static const uint8_t FRAME_START = 0xF5;
+static const uint8_t FRAME_END = 0xFB;
+static const size_t MAX_FRAME_LEN = 512;
+
 void AirConditioner::setup() {
   if (this->flow_control_pin_ != nullptr) {
     this->flow_control_pin_->setup();
+    this->flow_control_pin_->digital_write(false);
   }
   this->last_status_change = millis();
   this->status = Status::standby;
-}
-void AirConditioner::loop() {
-  if (millis() - this->last_extra_log_print > 3000) {
-    print_extra_log_in_this_loop = true;
-    this->last_extra_log_print = millis();
-  } else {
-    print_extra_log_in_this_loop = true;
+#ifdef USE_LIBRETINY_VARIANT_RTL8710B
+  if (auto *u = ambz_uart(this->parent_)) {
+    UART_RxCmd(u, ENABLE);
+    UART_INTConfig(u, RUART_IER_ERBI, ENABLE);
   }
+#endif
+}
 
-  if (millis() - this->last_recived_ > 10000 &&
-      millis() - this->last_status_change > 10000) {
+bool AirConditioner::read_rx_byte_(uint8_t *byte) {
+#ifdef USE_LIBRETINY_VARIANT_RTL8710B
+  UART_TypeDef *u = ambz_uart(this->parent_);
+  if (u != nullptr)
+    UART_INTConfig(u, RUART_IER_ERBI, DISABLE);
+  const bool ok = this->available() && this->read_byte(byte);
+  if (u != nullptr)
+    UART_INTConfig(u, RUART_IER_ERBI, ENABLE);
+  return ok;
+#else
+  return this->available() && this->read_byte(byte);
+#endif
+}
+
+void AirConditioner::loop() {
+  if (millis() - this->last_recived_ > 10000 && millis() - this->last_status_change > 10000) {
     ESP_LOGD(TAG, "Stuck reset error");
     this->rx_buffer_.clear();
+    this->rx_in_frame_ = false;
+    this->rx_pending_f4_ = false;
     change_status(Status::after_fail);
     return;
   }
 
   if (status == Status::after_fail) {
     this->rx_buffer_.clear();
+    this->rx_in_frame_ = false;
+    this->rx_pending_f4_ = false;
     uint8_t byte;
-    while (available() && read_byte(&byte)) {
-      flush();
+    while (this->read_rx_byte_(&byte)) {
     }
-
-    auto before_next_try = millis() - last_status_change > 8000;
-
-    if (print_extra_log_in_this_loop)
-      ESP_LOGD(TAG,
-               "Waiting %d before asking for status after communitation fail.",
-               before_next_try);
-
-    if (before_next_try <= 0) {
+    if (millis() - last_status_change > 3000) {
       ESP_LOGD(TAG, "Reset status.");
       change_status(Status::standby);
     }
-
     return;
   }
 
-  if (this->next_hvac_settings_) {
+  // The bus is half duplex: only send once the previous exchange is finished
+  // (reply received or timed out), otherwise the command collides with the
+  // unit's reply and is lost. Queued changes keep merging meanwhile.
+  if (this->next_hvac_settings_ && status == Status::standby) {
     send_status();
     change_status(Status::waiting_for_change_confirm);
     return;
   }
 
-  if (millis() - this->last_recived_ > 2000 && status == Status::standby) {
-    ESP_LOGD(TAG, "Requsting status.");
-    std::vector<uint8_t> requst_status{0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00,
-                                       0x00, 0x01, 0x01, 0xFE, 0x01, 0x00,
-                                       0x00, 0x66, 0x00, 0x00, 0x00};
-    this->send_raw(requst_status);
-    // F4 F5 00 40 0C 00 00 01 01 FE 01 00 00 66 00 00 00 01 B3 F4 FB
-    change_status(Status::waiting_for_status_response);
-
+  // A frame that stopped mid-way, or a request that got no reply: recover quickly
+  // instead of waiting for the 10 s stuck timer.
+  if (status == Status::waiting_for_more && millis() - this->last_recived_ > 1000) {
+    ESP_LOGD(TAG, "Incomplete frame (%u bytes), dropping", (unsigned) this->rx_buffer_.size());
+    change_status(Status::after_fail);
+    return;
+  }
+  if ((status == Status::waiting_for_status_response || status == Status::waiting_for_change_confirm) &&
+      millis() - this->last_send_ > 2000) {
+    ESP_LOGD(TAG, "No reply to request");
+    change_status(Status::standby);
     return;
   }
 
-  int available_to_read = 0;
-  while ((available_to_read = this->available())) {
-    std::vector<uint8_t> rec_buffor{};
-    rec_buffor.resize(available_to_read, 0);
+  if (millis() - this->last_recived_ > 2000 && status == Status::standby) {
+    ESP_LOGV(TAG, "Requesting status.");
+    // F4 F5 00 40 0C 00 00 01 01 FE 01 00 00 66 00 00 00 01 B3 F4 FB
+    std::vector<uint8_t> requst_status{0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00, 0x01, 0x01,
+                                       0xFE, 0x01, 0x00, 0x00, 0x66, 0x00, 0x00, 0x00};
+    this->send_raw(requst_status);
+    change_status(Status::waiting_for_status_response);
+    return;
+  }
 
-    this->read_array(&rec_buffor[0], available_to_read);
-    this->rx_buffer_.insert(this->rx_buffer_.end(), rec_buffor.begin(),
-                            rec_buffor.end());
-
-    const auto parse_status = this->parse_ac_message_byte_();
+  uint8_t byte;
+  while (this->read_rx_byte_(&byte)) {
     this->last_recived_ = millis();
-    switch (parse_status) {
-    case ParseStatus::PARSE_ERROR:
-      ESP_LOGD(TAG, "Parse error");
-      this->rx_buffer_.clear();
-      change_status(Status::after_fail);
-      return;
-    case ParseStatus::PARSE_OK:
-      this->rx_buffer_.clear();
-      change_status(Status::standby);
-      return;
-    case ParseStatus::NOT_FULL:
-      change_status(Status::waiting_for_more);
-      break;
+    switch (this->feed_byte_(byte)) {
+      case ParseStatus::PARSE_ERROR:
+        ESP_LOGD(TAG, "Parse error");
+        change_status(Status::after_fail);
+        return;
+      case ParseStatus::PARSE_OK:
+        change_status(Status::standby);
+        return;
+      case ParseStatus::NOT_FULL:
+        if (this->rx_in_frame_)
+          change_status(Status::waiting_for_more);
+        break;
     }
   }
+}
+
+ParseStatus AirConditioner::feed_byte_(uint8_t byte) {
+  if (this->rx_pending_f4_) {
+    this->rx_pending_f4_ = false;
+    if (byte == FRAME_START) {
+      // (Re)start of frame. Anything collected so far is dropped.
+      if (this->rx_in_frame_ && this->rx_buffer_.size() > 2)
+        ESP_LOGD(TAG, "Frame restarted, dropping %u bytes", (unsigned) this->rx_buffer_.size());
+      this->rx_buffer_.assign({FRAME_ESC, FRAME_START});
+      this->rx_in_frame_ = true;
+      return ParseStatus::NOT_FULL;
+    }
+    if (!this->rx_in_frame_)
+      return ParseStatus::NOT_FULL;
+    if (byte == FRAME_ESC) {
+      // Stuffed literal 0xF4.
+      this->rx_buffer_.push_back(FRAME_ESC);
+    } else if (byte == FRAME_END) {
+      this->rx_buffer_.push_back(FRAME_ESC);
+      this->rx_buffer_.push_back(FRAME_END);
+      this->rx_in_frame_ = false;
+      auto result = this->check_frame_();
+      this->rx_buffer_.clear();
+      return result;
+    } else {
+      // Unescaped F4 inside a frame: not valid, keep it to be lenient.
+      this->rx_buffer_.push_back(FRAME_ESC);
+      this->rx_buffer_.push_back(byte);
+    }
+  } else if (byte == FRAME_ESC) {
+    this->rx_pending_f4_ = true;
+    return ParseStatus::NOT_FULL;
+  } else if (this->rx_in_frame_) {
+    this->rx_buffer_.push_back(byte);
+  }
+
+  if (this->rx_buffer_.size() > MAX_FRAME_LEN) {
+    ESP_LOGD(TAG, "Frame too long");
+    this->rx_buffer_.clear();
+    this->rx_in_frame_ = false;
+    return ParseStatus::PARSE_ERROR;
+  }
+  return ParseStatus::NOT_FULL;
+}
+
+ParseStatus AirConditioner::check_frame_() {
+  const auto &buf = this->rx_buffer_;
+  if (buf.size() < 10) {
+    ESP_LOGD(TAG, "Frame too short: %u", (unsigned) buf.size());
+    return ParseStatus::PARSE_ERROR;
+  }
+  std::vector<uint8_t> payload_for_crc(buf.begin(), buf.end() - 4);
+  const uint16_t csum = this->checksum(payload_for_crc);
+  const uint8_t cr1 = (csum >> 8) & 0xFF;
+  const uint8_t cr2 = csum & 0xFF;
+  const uint8_t provided_cr1 = buf[buf.size() - 4];
+  const uint8_t provided_cr2 = buf[buf.size() - 3];
+  if (cr1 != provided_cr1 || cr2 != provided_cr2) {
+    ESP_LOGD(TAG, "Not valid checksum, expected: 0x%02X 0x%02X, got 0x%02X 0x%02X.", cr1, cr2, provided_cr1,
+             provided_cr2);
+    return ParseStatus::PARSE_ERROR;
+  }
+
+  std::vector<uint8_t> payload(buf.begin() + 2, buf.end() - 4);
+  ESP_LOGV(TAG, "Frame OK (%u bytes): %s", (unsigned) payload.size(), format_hex_pretty(payload).c_str());
+
+  if (payload.size() > 12 && (payload[11] == 0x66 || payload[11] == 0x65) && payload[12] == 0x00) {
+    // 0x66 = status reply; 0x65 = reply to a control command, which carries the
+    // full status in the same layout (verified live).
+    this->decode_message(payload);
+  } else {
+    ESP_LOGD(TAG, "Non-status frame (cmd 0x%02X, %u bytes)", payload.size() > 11 ? payload[11] : 0,
+             (unsigned) payload.size());
+  }
+
+  if (waiting_for_response) {
+    waiting_for_response = 0;
+  } else {
+    ESP_LOGD(TAG, "Not expected");
+  }
+  return ParseStatus::PARSE_OK;
 }
 
 float AirConditioner::get_setup_priority() const {
@@ -105,20 +229,16 @@ float AirConditioner::get_setup_priority() const {
 climate::ClimateTraits AirConditioner::traits() {
   auto traits = climate::ClimateTraits();
 
-  traits.set_supported_modes(
-      {climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL,
-       climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_FAN_ONLY,
-       climate::CLIMATE_MODE_DRY, climate::CLIMATE_MODE_HEAT_COOL});
+  traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL, climate::CLIMATE_MODE_HEAT,
+                              climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_DRY,
+                              climate::CLIMATE_MODE_HEAT_COOL});
 
-  traits.set_supported_fan_modes(
-      {climate::CLIMATE_FAN_OFF, climate::CLIMATE_FAN_AUTO,
-       climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_FOCUS,
-       climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_MIDDLE,
-       climate::CLIMATE_FAN_HIGH});
+  traits.set_supported_fan_modes({climate::CLIMATE_FAN_OFF, climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW,
+                                  climate::CLIMATE_FAN_FOCUS, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_MIDDLE,
+                                  climate::CLIMATE_FAN_HIGH});
 
-  traits.set_supported_swing_modes(
-      {climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
-       climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
+  traits.set_supported_swing_modes({climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_BOTH,
+                                    climate::CLIMATE_SWING_VERTICAL, climate::CLIMATE_SWING_HORIZONTAL});
 
   traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
   traits.set_visual_target_temperature_step(1.0f);
@@ -134,51 +254,51 @@ void AirConditioner::send_status() {
 
   std::vector<uint8_t> status{
       0xF4,
-      0xF5, // 1
-      0x00, // 2
-      0x40, // 3
-      0x29, // 4
-      0x00, // 5
-      0x00, // 6
-      0x01, // 7
-      0x01, // 8
-      0xFE, // 9
-      0x01, // 10
-      0x00, // 11
-      0x00, // 12
-      0x65, // 13
-      0x00, // 14
-      0x00, // 15
-      0x00, // 16
-      0x00, // 17
-      0x00, // 18
-      0x00, // 19
-      0x00, // 20
-      0x00, // 21
-      0x00, // 22
-      0x04, // 23
-      0x00, // 24
-      0x00, // 25
-      0x00, // 26
-      0x00, // 27
-      0x00, // 28
-      0x00, // 29
-      0x00, // 30
-      0x00, // 31
-      0x00, // 32
-      0x00, // 33
-      0x00, // 34
-      0x00, // 35
-      0x00, // 36
-      0x00, // 37
-      0x00, // 38
-      0x00, // 39
-      0x00, // 40
-      0x00, // 41
-      0x00, // 42
-      0x00, // 43
-      0x00, // 44
-      0x00  // 45
+      0xF5,  // 1
+      0x00,  // 2
+      0x40,  // 3
+      0x29,  // 4
+      0x00,  // 5
+      0x00,  // 6
+      0x01,  // 7
+      0x01,  // 8
+      0xFE,  // 9
+      0x01,  // 10
+      0x00,  // 11
+      0x00,  // 12
+      0x65,  // 13
+      0x00,  // 14
+      0x00,  // 15
+      0x00,  // 16
+      0x00,  // 17
+      0x00,  // 18
+      0x00,  // 19
+      0x00,  // 20
+      0x00,  // 21
+      0x00,  // 22
+      0x04,  // 23
+      0x00,  // 24
+      0x00,  // 25
+      0x00,  // 26
+      0x00,  // 27
+      0x00,  // 28
+      0x00,  // 29
+      0x00,  // 30
+      0x00,  // 31
+      0x00,  // 32
+      0x00,  // 33
+      0x00,  // 34
+      0x00,  // 35
+      0x00,  // 36
+      0x00,  // 37
+      0x00,  // 38
+      0x00,  // 39
+      0x00,  // 40
+      0x00,  // 41
+      0x00,  // 42
+      0x00,  // 43
+      0x00,  // 44
+      0x00   // 45
   };
 
   if (next_hvac_settings.mode != nullopt) {
@@ -191,7 +311,7 @@ void AirConditioner::send_status() {
       uint8_t m_mode = mode << 1;
       m_mode |= (1ul << 0);
       m_mode = m_mode << 4;
-      m_mode |= 0b00001100; // To on
+      m_mode |= 0b00001100;  // To on
 
       status[18] = m_mode;
       next_hvac_settings.target_temperature = this->target_temperature;
@@ -211,9 +331,9 @@ void AirConditioner::send_status() {
     tempX |= (1ul << 0);
     status[19] = tempX;
   }
-  
+
   status[36] = 0b01000000;
-  
+
   if (display_enable) {
     status[36] = 0b11000000;
   } else {
@@ -241,7 +361,6 @@ void AirConditioner::send_status() {
     status[16] = fanX;
   }
 
-  
   send_raw(status);
   this->next_hvac_settings_ = nullopt;
   ESP_LOGD(TAG, "send_status");
@@ -264,81 +383,35 @@ void AirConditioner::control(const climate::ClimateCall &call) {
   this->next_hvac_settings_ = std::move(next_hvac_settings);
 }
 
-ParseStatus AirConditioner::parse_ac_message_byte_() {
-  size_t at = this->rx_buffer_.size() - 1;
-
-  if (at < 6) {
-    return ParseStatus::NOT_FULL;
-  }
-
-  if (this->rx_buffer_[0] != 0xF4 || this->rx_buffer_[1] != 0xF5) {
-    ESP_LOGD(TAG, "Wrong magic start sequence 0x%x 0x%x.", this->rx_buffer_[0],
-             this->rx_buffer_[1]);
-    return ParseStatus::PARSE_ERROR;
-  }
-
-  std::vector<uint8_t> payload(rx_buffer_.begin() + 2, rx_buffer_.end() - 4);
-  if (at > 8 && this->rx_buffer_[at] == 0xFB &&
-      this->rx_buffer_[at - 1] == 0xF4) {
-
-    std::vector<uint8_t> payload_for_crc(rx_buffer_.begin(),
-                                         rx_buffer_.end() - 4);
-
-    auto const checksum = this->checksum(std::move(payload_for_crc));
-
-    uint8_t cr1 = (checksum >> 8) & 0xFF;
-    uint8_t cr2 = checksum & 0xFF;
-    size_t len = rx_buffer_.size();
-
-    uint8_t provided_cr1 = rx_buffer_[at - 3];
-    uint8_t provided_cr2 = rx_buffer_[at - 2];
-
-    if (cr1 != provided_cr1 || cr2 != provided_cr2) {
-      ESP_LOGD(TAG, "Not valid checksum, expected: 0x%x 0x%x, got 0x%x 0x%x.",
-               cr1, cr2, provided_cr1, provided_cr2);
-      return ParseStatus::PARSE_ERROR;
-    }
-  } else {
-    ESP_LOGD(TAG, "Not found end sequence yet at: %d.", at);
-    return ParseStatus::NOT_FULL;
-  }
-
-  ESP_LOGD(TAG, "Parsing message that seem to be OK: %s",
-           format_hex_pretty(payload).c_str());
-  decode_message(payload);
-
-  if (waiting_for_response) {
-    waiting_for_response = 0;
-  } else {
-    ESP_LOGD(TAG, "Not expected");
-  }
-
-  return ParseStatus::PARSE_OK;
-}
-
 void AirConditioner::dump_config() {
   ESP_LOGCONFIG(TAG, "Hisense:");
   LOG_PIN("  Flow Control Pin: ", this->flow_control_pin_);
 }
 
 void AirConditioner::send_raw(const std::vector<uint8_t> &payload) {
-  // Add F4 F5 at start
-
-  if (payload.empty()) {
+  if (payload.size() < 2)
     return;
-  }
-  auto const checksum = this->checksum(payload);
-  uint8_t cr1 = (checksum & 0x0000ff00) >> 8;
-  uint8_t cr2 = (checksum & 0x000000ff);
+  const uint16_t csum = this->checksum(payload);
+
+  // Everything between the F4 F5 header and the F4 FB trailer is byte-stuffed.
+  std::vector<uint8_t> frame(payload.begin(), payload.begin() + 2);
+  frame.reserve(payload.size() + 8);
+  auto put = [&frame](uint8_t b) {
+    frame.push_back(b);
+    if (b == FRAME_ESC)
+      frame.push_back(FRAME_ESC);
+  };
+  for (size_t i = 2; i < payload.size(); i++)
+    put(payload[i]);
+  put((csum >> 8) & 0xFF);
+  put(csum & 0xFF);
+  frame.push_back(FRAME_ESC);
+  frame.push_back(FRAME_END);
 
   if (this->flow_control_pin_ != nullptr)
     this->flow_control_pin_->digital_write(true);
 
-  this->write_array(payload);
-  this->write_byte(cr1);
-  this->write_byte(cr2);
-  this->write_byte(0xF4);
-  this->write_byte(0xFB);
+  this->write_array(frame);
   this->flush();
 
   if (this->flow_control_pin_ != nullptr)
@@ -348,17 +421,19 @@ void AirConditioner::send_raw(const std::vector<uint8_t> &payload) {
   last_send_ = millis();
 }
 
-short int AirConditioner::checksum(const std::vector<uint8_t> &payload) {
-  short int csum = 0;
-  int arrlen = payload.size();
-  for (int i = 2; i < arrlen; i++) {
-    csum = csum + payload[i];
-  }
+uint16_t AirConditioner::checksum(const std::vector<uint8_t> &payload) {
+  uint16_t csum = 0;
+  for (size_t i = 2; i < payload.size(); i++)
+    csum += payload[i];
   return csum;
 }
 
-void AirConditioner::decode_message(std::vector<uint8_t> payload) {
-  ESP_LOGD(TAG, "decode_message");
+void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
+  // Need at least up to the swing byte.
+  if (payload.size() < 34) {
+    ESP_LOGD(TAG, "Status frame too short: %u", (unsigned) payload.size());
+    return;
+  }
 
   static optional<climate::ClimateFanMode> decode_wind_codes[19]{
       climate::ClimateFanMode::CLIMATE_FAN_OFF,
@@ -371,15 +446,15 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
       nullopt,
       nullopt,
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_LOW, //"1",
+      climate::ClimateFanMode::CLIMATE_FAN_LOW,  //"1",
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_FOCUS, //"2",
+      climate::ClimateFanMode::CLIMATE_FAN_FOCUS,  //"2",
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_MEDIUM, //"3",
+      climate::ClimateFanMode::CLIMATE_FAN_MEDIUM,  //"3",
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_MIDDLE, //"4",
+      climate::ClimateFanMode::CLIMATE_FAN_MIDDLE,  //"4",
       nullopt,
-      climate::ClimateFanMode::CLIMATE_FAN_HIGH, //"5"
+      climate::ClimateFanMode::CLIMATE_FAN_HIGH,  //"5"
   };
 
   // Is ON
@@ -404,9 +479,10 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
 
   // Fan speed
   {
-    auto wind = decode_wind_codes[payload[14]];
-    this->fan_mode = wind;
-    ESP_LOGD(TAG, "fan speed %d", wind);
+    if (payload[14] < sizeof(decode_wind_codes) / sizeof(decode_wind_codes[0])) {
+      auto wind = decode_wind_codes[payload[14]];
+      this->fan_mode = wind;
+    }
   }
 
   // Swig detect
@@ -432,23 +508,19 @@ void AirConditioner::decode_message(std::vector<uint8_t> payload) {
 
 #ifdef USE_SENSOR
   {
-    update_sub_sensor_(SubSensorType::INDOOR_TEMPERATURE,
-                       static_cast<float>(payload[18]));
-    update_sub_sensor_(SubSensorType::INDOOR_COIL_TEMPERATURE,
-                       static_cast<float>(payload[19]));
+    update_sub_sensor_(SubSensorType::INDOOR_TEMPERATURE, static_cast<float>(payload[18]));
+    update_sub_sensor_(SubSensorType::INDOOR_COIL_TEMPERATURE, static_cast<float>(payload[19]));
 
-    update_sub_sensor_(SubSensorType::INDOOR_HUMIDITY,
-                       static_cast<float>(payload[21]));
-    update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE,
-                       static_cast<float>(payload[40]));
-    update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE,
-                       static_cast<float>(payload[41]));
+    update_sub_sensor_(SubSensorType::INDOOR_HUMIDITY, static_cast<float>(payload[21]));
+    if (payload.size() > 41) {
+      update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE, static_cast<float>(payload[40]));
+      update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, static_cast<float>(payload[41]));
+    }
 
     //  update_sub_sensor_(SubSensorType::OUTDOOR_TEMPERATURE,
     //  static_cast<float>(payload[41])); //OutDoor coil?
   }
 #endif
-
 }
 
 #ifdef USE_SENSOR
@@ -478,10 +550,12 @@ void AirConditioner::set_display_switch(bool state) {
 }
 
 void AirConditioner::change_status(Status new_status) {
+  if (new_status != this->status)
+    ESP_LOGV(TAG, "Status %d -> %d", (int) this->status, (int) new_status);
   this->status = new_status;
   last_status_change = millis();
 }
 
-} // namespace ac
-} // namespace hisense
-} // namespace esphome
+}  // namespace ac
+}  // namespace hisense
+}  // namespace esphome

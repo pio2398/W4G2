@@ -105,3 +105,21 @@ switch:
       name: Hisens Display Enable
 
 ```
+## LibreTiny (RTL8710BN) UART issues: handled by the component
+
+On RTL8710B the component works around two LibreTiny bugs itself. No YAML lambdas are needed:
+
+* LibreTiny >= 1.12 (ESPHome 2026.x) never enables UART RX, so requests go out but no reply
+  arrives (libretiny-eu/libretiny#366). The component re-enables RX in `setup()`.
+* The Arduino RX ring buffer's element count is updated from both the interrupt and `read()`
+  without locking. A lost update leaves the end of every frame unreadable, which looked like
+  the component stalling for ~18 s after each reply (libretiny-eu/libretiny#419). The component
+  masks the UART RX interrupt around each read.
+
+The `framework-arduino-api` RingBufferFix `platform_packages` override is not needed. Current
+builds do not apply it, and it does not fix the race above.
+
+## Notes from live testing (AEH-W4G2, product type 104)
+
+* The unit answers every control command (0x65) with a full status frame in the same layout
+  as the 0x66 reply. The component uses it to confirm changes within about 0.5 s.
