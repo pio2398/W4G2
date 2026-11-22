@@ -130,6 +130,12 @@ text_sensor:
     faults:               # "OK" or a list of active fault flags
       name: Faults
 
+binary_sensor:
+  - platform: hisense
+    hisense_id: hisense_ac
+    remote_used:          # diagnostic: unit was controlled by its IR remote or keys
+      name: Remote Used
+
 switch:
   - platform: hisense
     hisense_id: hisense_ac
@@ -168,6 +174,10 @@ restored at boot.
 `timer_on` / `timer_off` set the unit's own on and off timers, in minutes from now (up to
 23 h 59 min). Setting 0 cancels the timer. They show the time left, including for timers set
 with the remote. The unit counts down once a minute, so a timer can fire up to a minute early.
+
+`remote_used` reads status byte 36 bit 3, which other implementations describe as "IR remote
+or key control before this command". It has never been seen set on product type 104 (it stays
+off through remote commands), but may work on other units.
 
 `beep` is a local setting, not a unit state: it sets byte 23 bit 2 of the commands sent from
 ESPHome, which asks the unit to beep when it accepts the command (the stock module always sets

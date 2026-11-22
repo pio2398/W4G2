@@ -16,6 +16,9 @@
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
+#ifdef USE_BINARY_SENSOR
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#endif
 #ifdef USE_SELECT
 #include "esphome/components/select/select.h"
 #endif
@@ -68,6 +71,10 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 
 #ifdef USE_TEXT_SENSOR
   void set_faults_text_sensor(text_sensor::TextSensor *s) { this->faults_text_sensor_ = s; }
+#endif
+#ifdef USE_BINARY_SENSOR
+  /// Status byte 36 bit 3: the unit was controlled by its IR remote or buttons since the previous command.
+  void set_remote_used_binary_sensor(binary_sensor::BinarySensor *s) { this->remote_used_binary_sensor_ = s; }
 #endif
 
   // Sleep profiles reported in status byte 15 (value >> 1) and sent in control
@@ -161,6 +168,9 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
 
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *faults_text_sensor_{nullptr};
+#endif
+#ifdef USE_BINARY_SENSOR
+  binary_sensor::BinarySensor *remote_used_binary_sensor_{nullptr};
 #endif
 #ifdef USE_SELECT
   select::Select *sleep_profile_select_{nullptr};

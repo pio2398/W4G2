@@ -578,6 +578,12 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
 
   this->decode_features_(payload);
   this->decode_faults_(payload);
+#ifdef USE_BINARY_SENSOR
+  // Byte 36 bit 3 (straga's field table: "IR remote or key control before this
+  // command"); bit 2 is the same for Wi-Fi control. Never seen set on product type 104.
+  if (this->remote_used_binary_sensor_ != nullptr && payload.size() > 36)
+    this->remote_used_binary_sensor_->publish_state((payload[36] & 0x08) != 0);
+#endif
 #ifdef USE_NUMBER
   // On/off timers, as time remaining (also when set with the remote): bytes 28/29
   // (on) and 30/31 (off). First byte bit 1 = set, bits 7-3 = hours; second byte
