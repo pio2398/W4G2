@@ -239,3 +239,8 @@ builds do not apply it, and it does not fix the race above.
   bits are therefore sent only when the display switch changes.
 * Turbo makes the unit set the fan to high and the setpoint to 16 °C. Sleep drops the fan to low.
   This is the unit's own behaviour.
+
+## Protocol
+
+The serial protocol (frame format, status and control fields, sources) is described in
+[protocol.md](protocol.md).
