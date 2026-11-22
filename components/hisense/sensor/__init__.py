@@ -42,6 +42,8 @@ CONF_OUTDOOR_TEMPERATURE = "outdoor_temperature"
 CONF_SUPPLY_VOLTAGE = "supply_voltage"
 CONF_COMPRESSOR_FREQUENCY = "compressor_frequency"
 CONF_DISCHARGE_TEMPERATURE = "discharge_temperature"
+CONF_SETPOINT = "setpoint"
+CONF_TEMPERATURE_COMPENSATION = "temperature_compensation"
 
 
 SENSOR_TYPES = {
@@ -98,6 +100,22 @@ SENSOR_TYPES = {
         icon=ICON_THERMOMETER,
         accuracy_decimals=0,
         device_class=DEVICE_CLASS_TEMPERATURE,
+        state_class=STATE_CLASS_MEASUREMENT,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
+    # Setpoint reported by the unit, for graphing (the climate entity has it too).
+    CONF_SETPOINT: sensor.sensor_schema(
+        unit_of_measurement=UNIT_CELSIUS,
+        icon="mdi:thermostat",
+        accuracy_decimals=0,
+        device_class=DEVICE_CLASS_TEMPERATURE,
+        state_class=STATE_CLASS_MEASUREMENT,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
+    # Auto/dry temperature compensation, raw 4-bit value (encoding not confirmed).
+    CONF_TEMPERATURE_COMPENSATION: sensor.sensor_schema(
+        icon="mdi:thermometer-plus",
+        accuracy_decimals=0,
         state_class=STATE_CLASS_MEASUREMENT,
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
     ),

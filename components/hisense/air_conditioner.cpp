@@ -617,6 +617,12 @@ void AirConditioner::decode_message(const std::vector<uint8_t> &payload) {
   update_sub_sensor_(SubSensorType::OUTDOOR_COIL_TEMPERATURE, signed_or_nan(43));
   // Compressor discharge temperature (stock firmware field table; rises with the compressor).
   update_sub_sensor_(SubSensorType::DISCHARGE_TEMPERATURE, byte_or_nan(44));
+  // Setpoint as reported by the unit (byte 17), as a sensor so its history can be
+  // graphed, e.g. to see whether a sleep curve shows up in the reported setpoint.
+  update_sub_sensor_(SubSensorType::SETPOINT, (float) payload[17]);
+  // Byte 24 bits 7-4: auto/dry temperature compensation (stock firmware
+  // t_temp_compensate; the remote offers -7..+7). Encoding not confirmed: raw value.
+  update_sub_sensor_(SubSensorType::TEMPERATURE_COMPENSATION, (float) (payload[24] >> 4));
   // Compressor output frequency in Hz (ramps; byte 39 is the target frequency).
   if (payload.size() > 41)
     update_sub_sensor_(SubSensorType::COMPRESSOR_FREQUENCY, (float) payload[41]);

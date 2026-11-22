@@ -119,6 +119,10 @@ sensor:
       name: Compressor Frequency
     discharge_temperature: # compressor discharge temperature in °C
       name: Discharge Temperature
+    setpoint:             # diagnostic: setpoint as reported by the unit, for graphing
+      name: Setpoint
+    temperature_compensation: # diagnostic: auto/dry compensation, raw value (encoding unknown)
+      name: Temperature Compensation
 
 text_sensor:
   - platform: hisense

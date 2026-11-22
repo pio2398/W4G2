@@ -110,6 +110,8 @@ class AirConditioner : public uart::UARTDevice, public Component, public climate
     // Added from stock firmware analysis
     SUPPLY_VOLTAGE,
     DISCHARGE_TEMPERATURE,
+    SETPOINT,
+    TEMPERATURE_COMPENSATION,
     SUB_SENSOR_TYPE_COUNT,
     BIG_DATA_FRAME_SUB_SENSORS = INDOOR_COIL_TEMPERATURE,
   };
